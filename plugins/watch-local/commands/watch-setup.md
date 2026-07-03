@@ -1,6 +1,6 @@
 ---
 description: One-time interactive setup for /watch-local. Verifies Docker + GPU, picks storage locations, builds container images, downloads the whisper model, and runs a smoke test.
-argument-hint: [-Model name] [-Yes]
+argument-hint: "[-Model name] [-Yes]"
 allowed-tools: [Bash, AskUserQuestion]
 ---
 

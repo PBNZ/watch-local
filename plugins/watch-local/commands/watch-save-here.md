@@ -1,6 +1,6 @@
 ---
-description: Promote a /watch job's artifacts into the current directory under ./watch-local-output/<slug>/. Uses the last /watch run by default. Local/UNC sources get a source-link.txt instead of a copy unless --include-source is set.
-argument-hint: [last|<slug>] [--include-source] [--move] [--remove-canonical]
+description: "Promote a /watch job's artifacts into the current directory under ./watch-local-output/<slug>/. Uses the last /watch run by default. Local/UNC sources get a source-link.txt instead of a copy unless --include-source is set."
+argument-hint: "[last|<slug>] [--include-source] [--move] [--remove-canonical]"
 allowed-tools: [Bash, AskUserQuestion]
 ---
 
