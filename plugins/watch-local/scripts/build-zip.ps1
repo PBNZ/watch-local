@@ -63,7 +63,8 @@ try {
         'plugins',
         'docs',
         'LICENSE',
-        'README.md'
+        'README.md',
+        'SECURITY.md'
     )
     foreach ($name in $includeTop) {
         $src = Join-Path $marketRoot $name

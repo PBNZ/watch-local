@@ -1,5 +1,68 @@
 # Changelog
 
+## [Unreleased]
+
+## 0.3.0-rc.1 -- 2026-07-04
+
+Daily-use hardening + publish-prep release candidate. Stays a pre-release
+until the human plugin-UI install test passes (see README / handoff notes).
+
+### Fixed
+- **Two slash commands loaded with empty metadata.** The YAML frontmatter of
+  `watch-setup.md` and `watch-save-here.md` failed to parse (unquoted values
+  starting with `[`), so description/argument-hint/allowed-tools were
+  silently dropped at runtime. Caught by `claude plugin validate --strict`,
+  which is now the primary CI gate. Values quoted; both manifests validate
+  clean.
+- **Local-file reports crashed under StrictMode.** `$info.uploader` does not
+  exist for local sources (tools_run.py emits per-source-kind info shapes) and
+  StrictMode turns a missing property into a terminating error. The report now
+  probes properties before reading (`Get-WLInfoProp`). Verified by a real
+  local-file run end to end.
+- **`/watch:grab-frames` now works on plain local jobs.** watch.ps1 writes a
+  per-job `job.json` (same shape as last-job.json), and grab-frames falls back
+  to the recorded original path when there is no downloaded video, mounting
+  the source's parent dir read-only exactly like watch.ps1 does. UNC or
+  missing sources fail with exit 20 and an actionable message (re-run with
+  `-Screenshots` / `-SaveHere -IncludeSource`). +5 Pester regression tests.
+- **`RemoteException` stderr noise eliminated.** `Invoke-WLDocker` unwraps
+  native-stderr ErrorRecords to plain text on the real stderr stream: worker
+  progress stays live, nothing is buffered or swallowed, exit codes remain the
+  source of truth. Verified on synthetic (exit 0/7) and real runs.
+
+### Changed
+- **SessionStart hook is now a single marker `Test-Path`** (~160 ms, no child
+  powershell, no docker probe). SessionStart fires on every
+  startup/resume/clear/compact, so it must stay cheap; Docker/image state
+  surfaces via the `setup.ps1 -Check` preflight that SKILL.md Step 0 runs
+  before every `/watch`.
+- **Exit code 32 (compare failed) retired.** The compare stage is non-fatal
+  by design (warn + report continues), so no process could ever exit 32.
+
+### Publish-prep
+- `scripts/ci/` validators (marketplace + plugin manifest checks, skill
+  frontmatter check, prompt-injection / invisible-Unicode / URL-allowlist
+  safety scan, no-private-contact scan) and a GitHub Actions workflow running
+  `claude plugin validate --strict` (primary gate) plus the python checks.
+- `.gitignore` (dist/, caches); SECURITY.md.
+
+### Docs
+- Plugin README rewritten to shipped behavior (always-on Whisper + caption
+  comparison, `docker run` worker path, all four commands, honest limits:
+  Windows-only, full-audio transcription under `-Start`/`-End` focus,
+  translation-provenance gap, size-probe fallback).
+- architecture.md: `docker run` rationale, corrected exit-code table, job
+  layout (job.json, screenshots/), state-location + SessionStart rationale.
+
+### Verified (this release)
+- 87 pytest + 33 Pester + integration suite: all pass.
+- Real end-to-end runs: captioned YouTube URL with `-Start/-End` +
+  `-Screenshots` (25:41 source, 1080p uncapped, 80 focused frames, creator
+  primary, comparison=minor, 2/2 native 1920x1080 stills); plain local file
+  (whisper primary); UNC path via staged copy; `/watch:grab-frames` on a
+  plain local job (2/2 native stills); `/watch:save-here` (source-link.txt);
+  short URL with `-Cleanup` (job dir confirmed removed).
+
 ## 0.2.2-beta -- 2026-06-05
 
 Fixes the long-standing intermittent `docker compose run` hang (the v0.2.0
