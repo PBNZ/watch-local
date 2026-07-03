@@ -38,8 +38,12 @@ Two Docker images, both built locally on first `/watch-setup`:
 | `watch-local/tools:1` | `python:3.11-slim` | ~900 MB | yt-dlp + ffmpeg + Python workers. CPU-only. |
 | `watch-local/whisper:cu128` | `nvidia/cuda:12.8.0-cudnn-runtime-ubuntu22.04` | ~9 GB | faster-whisper. GPU. |
 
-Containers run via `docker compose run --rm` -- they exist only for
-the lifetime of the call. Nothing is `up -d`.
+Per-call workers run via plain `docker run --rm` (`Invoke-WLRun`) -- they
+exist only for the lifetime of the call; nothing is `up -d`. Image builds
+still go through `docker compose build` (`docker-compose.yml` is the build
+manifest). `docker compose run` is deliberately NOT used: on the Docker
+Desktop WSL2 backend it intermittently deadlocks at container start (the
+v0.2.0 blocker -- see CHANGELOG 0.2.2).
 
 ## Default paths
 
@@ -51,10 +55,12 @@ the lifetime of the call. Nothing is `up -d`.
   jobs\<slug>\             # per-call artifacts
     download\              # downloaded video + info.json + VTTs (URL only)
     frames\frame_NNNN.jpg
+    screenshots\           # native-res stills (-Screenshots / grab-frames)
     audio.mp3
     intermediate.json
     transcript_whisper.json
     comparison.json
+    job.json               # per-job source record (grab-frames uses this)
   models\hf-cache\hub\...  # faster-whisper Hugging Face cache
 
 %TEMP%\watch-local-stage\<slug>\
@@ -62,6 +68,18 @@ the lifetime of the call. Nothing is `up -d`.
 ```
 
 All three roots are configurable via `setup.ps1 -SetJobsRoot / -SetModelsRoot / -SetStagingRoot`.
+
+State deliberately lives OUTSIDE the plugin install dir: `${CLAUDE_PLUGIN_ROOT}`
+is replaced on every plugin update, so anything persistent stored there (model
+caches, jobs, config) would silently vanish. `%LOCALAPPDATA%\watch-local\` is
+Windows' conventional per-user app-data location, survives plugin updates and
+reinstalls, and keeps multi-GB artifacts out of `~/.claude`. The scripts never
+write runtime state into the plugin directory.
+
+The plugin's SessionStart hook is a single `Test-Path` on the setup marker
+(fast by design -- SessionStart fires on every startup/resume/clear/compact).
+The full Docker/image preflight runs via `setup.ps1 -Check` in SKILL.md Step 0
+before each `/watch`.
 
 ## Transcript policy (always run Whisper)
 
@@ -112,9 +130,8 @@ Documented in `scripts/_lib.ps1`:
 | 20 | source not found / unreachable |
 | 21 | UNC stage copy failed |
 | 22 | incompatible flags (-OutDir + -SaveHere etc.) |
-| 30 | tools container failed |
-| 31 | whisper container failed (non-fatal -- partial report still emitted) |
-| 32 | compare stage failed (non-fatal) |
-| 40 | report generation failed |
+| 30 | tools container / still extraction failed |
+| 31 | whisper image build failed (setup). During /watch a whisper failure is non-fatal: partial report, exit 0 |
+| 40 | save-here transfer failed |
 | 50 | insufficient disk space |
 | 60 | purge refused (outside safe roots, missing confirmation, etc.) |

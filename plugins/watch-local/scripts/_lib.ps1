@@ -47,7 +47,8 @@ $script:WL_EXIT = [ordered]@{
     FLAG_CONFLICT      = 22
     TOOLS_FAILED       = 30
     WHISPER_FAILED     = 31
-    COMPARE_FAILED     = 32
+    # 32 (compare failed) retired: the compare stage is non-fatal by design
+    # (warn + report continues), so no process can ever exit 32.
     REPORT_FAILED      = 40
     NO_DISK            = 50
     PURGE_REFUSED      = 60
