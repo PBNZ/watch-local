@@ -25,6 +25,12 @@ until the human plugin-UI install test passes (see README / handoff notes).
   the source's parent dir read-only exactly like watch.ps1 does. UNC or
   missing sources fail with exit 20 and an actionable message (re-run with
   `-Screenshots` / `-SaveHere -IncludeSource`). +5 Pester regression tests.
+- **save-here rejects traversal slugs (exit 60).** A slug containing `\`/`..`
+  could re-resolve inside jobs_root on the source side while redirecting the
+  destination overwrite outside `./watch-local-output/`. Found by the
+  pre-publish security review (its only non-informational finding); the review
+  verdict was otherwise publishable with all eight audited areas clean.
+  +1 Pester regression test (34 total).
 - **`RemoteException` stderr noise eliminated.** `Invoke-WLDocker` unwraps
   native-stderr ErrorRecords to plain text on the real stderr stream: worker
   progress stays live, nothing is buffered or swallowed, exit codes remain the
