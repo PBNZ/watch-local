@@ -113,3 +113,37 @@ Describe 'grab-frames source resolution (plain local jobs)' {
         $script:_lastCode | Should -Be 60
     }
 }
+
+Describe 'save-here slug validation (destination-side scope safety)' {
+    BeforeEach {
+        $script:S = _NewSandbox
+    }
+    AfterEach {
+        Remove-Item -LiteralPath $S.Sandbox -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'refuses a slug with separators or .. before touching the destination' {
+        # A traversal slug can re-resolve INSIDE jobs_root on the source side
+        # while redirecting the destination overwrite outside
+        # watch-local-output -- so save-here must reject it outright.
+        $saveHere = Join-Path $script:Root 'plugins\watch-local\scripts\save-here.ps1'
+        $victim = Join-Path $S.Sandbox 'project\jobs\keep'
+        New-Item -ItemType Directory -Force -Path $victim | Out-Null
+        'precious' | Set-Content -LiteralPath (Join-Path $victim 'data.txt')
+        $stdoutFile = New-TemporaryFile; $stderrFile = New-TemporaryFile
+        $old = $env:LOCALAPPDATA
+        try {
+            $env:LOCALAPPDATA = $S.AppData
+            $p = Start-Process -FilePath 'powershell.exe' -ArgumentList @(
+                '-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$saveHere`"",
+                '-Slug','"..\jobs\keep"','-Cwd',"`"$(Join-Path $S.Sandbox 'project')`"") `
+                -RedirectStandardOutput $stdoutFile.FullName `
+                -RedirectStandardError $stderrFile.FullName -Wait -NoNewWindow -PassThru
+            $p.ExitCode | Should -Be 60
+            Test-Path (Join-Path $victim 'data.txt') | Should -BeTrue
+        } finally {
+            $env:LOCALAPPDATA = $old
+            Remove-Item $stdoutFile.FullName, $stderrFile.FullName -Force -ErrorAction SilentlyContinue
+        }
+    }
+}

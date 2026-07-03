@@ -80,6 +80,15 @@ if ($Slug -eq 'last') {
     $lastOrig   = $null
 }
 
+# Slugs are bare 16-hex dir names. Reject separators / '..' outright: the
+# slug is also used to build the DESTINATION dir (which gets overwritten),
+# so a traversal slug could redirect the overwrite outside watch-local-output
+# even when the source side still resolves inside jobs_root.
+if ($Slug -match '[\\/]' -or $Slug -match '\.\.') {
+    Write-Err "refused: slug '$Slug' contains path separators or '..'."
+    exit $script:WL_EXIT.PURGE_REFUSED
+}
+
 $srcJobDir = Join-Path $jobsRoot $Slug
 try {
     Assert-InsideRoot -Target $srcJobDir -Root $jobsRoot
