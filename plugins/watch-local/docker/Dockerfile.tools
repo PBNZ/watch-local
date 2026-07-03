@@ -1,0 +1,24 @@
+# yt-dlp + ffmpeg + Python on slim Debian. CPU only — no CUDA.
+#
+# Handles: download via yt-dlp, probe via ffprobe, frame extraction via
+# ffmpeg, audio extraction for the (optional) whisper container, VTT caption
+# parsing. All transcription runs in the separate watch-whisper image.
+
+FROM python:3.11-slim-bookworm
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ffmpeg ca-certificates curl \
+        && rm -rf /var/lib/apt/lists/*
+
+# yt-dlp: install via pip so updates are easy (rebuild this image only,
+# whisper image untouched). Pin a recent floor; latest from PyPI on build.
+RUN pip install --upgrade "yt-dlp>=2026.1.0"
+
+WORKDIR /app
+
+CMD ["python3", "tools_run.py"]
