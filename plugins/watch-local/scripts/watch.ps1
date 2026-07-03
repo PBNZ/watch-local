@@ -479,12 +479,22 @@ $info = $intermediate.info
 $dur  = [double]$intermediate.duration_seconds
 $focused = [bool]$intermediate.focused
 
+# info's keys vary by source kind (local files have no 'uploader'; a URL
+# whose info.json failed to parse has no 'title'). Under StrictMode a
+# missing property is a terminating error, so probe before reading.
+function Get-WLInfoProp([object]$Obj, [string]$Name) {
+    if ($null -ne $Obj -and $Obj.PSObject.Properties.Match($Name).Count -gt 0) { return $Obj.$Name }
+    return $null
+}
+$infoTitle    = Get-WLInfoProp $info 'title'
+$infoUploader = Get-WLInfoProp $info 'uploader'
+
 Write-Output ""
 Write-Output "# watch: video report"
 Write-Output ""
 Write-Output "- **Source:** $($intermediate.source)"
-if ($info.title)    { Write-Output "- **Title:** $($info.title)" }
-if ($info.uploader) { Write-Output "- **Uploader:** $($info.uploader)" }
+if ($infoTitle)    { Write-Output "- **Title:** $infoTitle" }
+if ($infoUploader) { Write-Output "- **Uploader:** $infoUploader" }
 Write-Output ("- **Duration:** {0} ({1:N1}s)" -f (Format-WLTime $dur), $dur)
 if ($focused) {
     Write-Output ("- **Focus range:** {0} -> {1} ({2:N1}s)" -f `

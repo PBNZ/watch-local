@@ -13,8 +13,11 @@ API keys.
 - `/watch <url-or-path> [question]` -- main pipeline
 - `/watch-setup` -- one-time interactive wizard
 - `/watch:save-here` -- promote a job into the current project dir
-- Local NVIDIA GPU transcription via `faster-whisper` in Docker
+- `/watch:grab-frames` -- native-resolution stills from an already-watched job
+- Local NVIDIA GPU transcription via `faster-whisper` in Docker (always runs)
 - Caption-provenance-aware transcripts (creator subs + Whisper + comparison)
+- Best-quality-by-default downloads (uncapped; `-MaxHeight` to cap) and
+  on-demand native-res screenshots (`-Screenshots`)
 - SMB / UNC source support (auto-staged)
 - Disk-space pre-flight, scope-safe purge tools
 
@@ -63,9 +66,11 @@ You do NOT need yt-dlp or ffmpeg installed on the host -- they live in container
 /watch \\fileserver\videos\interview.mkv summarize the first 2 minutes
 /watch <url> -Start 2:15 -End 2:45        # focus a section
 /watch <url> -Model medium                # smaller / faster model
+/watch <url> -Screenshots "1:00,2:30"     # native-res stills during the run
 /watch <url> -SaveHere                    # save artifacts into ./watch-local-output/<slug>/
 /watch:save-here                          # promote the most recent job
 /watch:save-here last --include-source    # also copy local/UNC source file
+/watch:grab-frames 10:00,22:40            # native-res stills from the last job
 ```
 
 See [SKILL.md](./plugins/watch-local/SKILL.md) for the full flag reference.
