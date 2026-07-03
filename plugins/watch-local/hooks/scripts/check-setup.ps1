@@ -1,29 +1,22 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-    SessionStart hook -- one-line status, silent if ready.
+    SessionStart hook -- one-line nudge if setup never completed; silent otherwise.
+
+.DESCRIPTION
+    SessionStart fires on EVERY Claude Code startup/resume/clear/compact, so
+    this must stay cheap: a single Test-Path on the setup marker, no child
+    processes, no docker calls. Docker CLI/daemon/image state is checked by
+    the real preflight (setup.ps1 -Check) that SKILL.md Step 0 runs before
+    every /watch -- that is where "Docker Desktop not running" etc. surfaces,
+    exactly when it matters.
 #>
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'SilentlyContinue'
 
-$pluginRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$setup = Join-Path $pluginRoot 'scripts\setup.ps1'
-
-if (-not (Test-Path -LiteralPath $setup)) {
-    Write-Output "/watch-local: setup.ps1 missing -- plugin install incomplete?"
-    exit 0
-}
-
-& powershell.exe -ExecutionPolicy Bypass -File $setup -Check 2>$null | Out-Null
-$code = $LASTEXITCODE
-if ($code -eq 0) { exit 0 }
-
-switch ($code) {
-    2 { Write-Output "/watch-local: docker CLI not found. Install Docker Desktop and re-run /watch-setup." }
-    3 { Write-Output "/watch-local: Docker Desktop daemon not running. Start Docker Desktop." }
-    4 { Write-Output "/watch-local: container images not built yet. Run /watch-setup." }
-    5 { Write-Output "/watch-local: setup never completed. Run /watch-setup." }
-    default { Write-Output "/watch-local: setup check returned $code. Run /watch-setup." }
+$marker = Join-Path $env:LOCALAPPDATA 'watch-local\.setup-complete'
+if (-not (Test-Path -LiteralPath $marker)) {
+    Write-Output "/watch-local: setup never completed. Run /watch-setup before the first /watch."
 }
 exit 0

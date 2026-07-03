@@ -287,6 +287,12 @@ function Assert-DockerReady {
 # -- a bare `return $LASTEXITCODE` would otherwise interleave docker
 # stdout in the caller's `$code`.
 #
+# Native stderr lines arrive on the merged pipeline as ErrorRecords, which
+# PS 5.1 renders as red "RemoteException" blocks (pure noise for worker
+# progress lines). Unwrap them to plain text on the real stderr stream --
+# progress stays live, nothing is swallowed, and the exit code stays the
+# single source of truth for failure.
+#
 # NOTE: ArgList is a plain [string[]] (NOT ValueFromRemainingArguments).
 # Callers MUST pass a flat array, e.g. `-ArgList @('compose','-f',$f,'build','tools')`.
 function Invoke-WLDocker {
@@ -295,7 +301,13 @@ function Invoke-WLDocker {
     $ErrorActionPreference = 'Continue'
     Write-Detail "docker $($ArgList -join ' ')"
     try {
-        & docker @ArgList 2>&1 | Out-Host
+        & docker @ArgList 2>&1 | ForEach-Object {
+            if ($_ -is [System.Management.Automation.ErrorRecord]) {
+                [Console]::Error.WriteLine($_.Exception.Message)
+            } else {
+                $_ | Out-Host
+            }
+        }
         return $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $orig

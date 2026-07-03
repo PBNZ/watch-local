@@ -83,14 +83,49 @@ if (Test-Path -LiteralPath $dlDir) {
              Where-Object { $_.Extension -match '^\.(mp4|mkv|webm|mov|m4v|avi|flv|wmv)$' } |
              Select-Object -First 1
 }
-if (-not $video) {
-    Write-Err "no downloaded source video found under $dlDir."
-    Write-Err "grab-frames works on URL jobs (video kept on disk). For local/UNC"
-    Write-Err "sources the original file is not copied -- re-run /watch with -IncludeSource,"
-    Write-Err "or point grab-frames at a job that downloaded its source."
-    exit $script:WL_EXIT.SOURCE_BAD
+
+$inputMountHost = $null
+if ($video) {
+    $containerVideo = "/work/download/$($video.Name)"
+} else {
+    # Local/UNC job: no video under download/. Recover the original source
+    # path from the job's own job.json (written by watch.ps1), falling back
+    # to last-job.json for jobs that predate job.json.
+    $origPath = $null
+    $jobJson = Join-Path $jobDir 'job.json'
+    if (Test-Path -LiteralPath $jobJson) {
+        try { $origPath = [string](Read-UTF8 $jobJson | ConvertFrom-Json).original_path } catch { }
+    }
+    if (-not $origPath -and (Test-Path -LiteralPath $script:WL_LAST_JOB)) {
+        try {
+            $last = Read-UTF8 $script:WL_LAST_JOB | ConvertFrom-Json
+            if ([string]$last.slug -eq $Slug) { $origPath = [string]$last.original_path }
+        } catch { }
+    }
+    if ($origPath -and $origPath.StartsWith('\\')) {
+        Write-Err "this job's source is a UNC share ($origPath), which docker cannot"
+        Write-Err "mount directly and whose staged copy is gone. Re-run /watch on the UNC"
+        Write-Err "path with -Screenshots `"MM:SS,...`" (stills during the run), or with"
+        Write-Err "-SaveHere -IncludeSource to keep a local copy for later grabs."
+        exit $script:WL_EXIT.SOURCE_BAD
+    }
+    if ($origPath -and (Test-Path -LiteralPath $origPath)) {
+        $item = Get-Item -LiteralPath $origPath
+        $inputMountHost = $item.Directory.FullName
+        $containerVideo = "/input/$($item.Name)"
+        Write-Stage "local-source job: mounting original file read-only ($origPath)"
+    } else {
+        if ($origPath) {
+            Write-Err "this job's original source is no longer at $origPath."
+        } else {
+            Write-Err "no downloaded source video under $dlDir and no recorded original path."
+        }
+        Write-Err "grab-frames needs the source video: URL jobs keep it on disk; for"
+        Write-Err "local jobs the original file must still exist at its recorded path."
+        Write-Err "Re-run /watch with -Screenshots `"MM:SS,...`", or -SaveHere -IncludeSource."
+        exit $script:WL_EXIT.SOURCE_BAD
+    }
 }
-$containerVideo = "/work/download/$($video.Name)"
 #endregion
 
 #region Extract
@@ -108,9 +143,12 @@ $runArgs = @(
     '-e', 'W_OUT_DIR=/work/screenshots',
     '-e', "W_STILL_RES=$Resolution",
     '-v', "$(ConvertTo-DockerPath $jobDir):/work",
-    '-v', "$(ConvertTo-DockerPath $workerDir):/app:ro",
-    $script:WL_IMG_TOOLS, 'python3', '/app/stills.py'
+    '-v', "$(ConvertTo-DockerPath $workerDir):/app:ro"
 )
+if ($inputMountHost) {
+    $runArgs += @('-v', "$(ConvertTo-DockerPath $inputMountHost):/input:ro")
+}
+$runArgs += @($script:WL_IMG_TOOLS, 'python3', '/app/stills.py')
 $code = Invoke-WLRun $runArgs
 if ($code -ne 0) {
     Write-Err "still extraction failed (exit $code)."

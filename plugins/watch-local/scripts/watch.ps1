@@ -648,6 +648,9 @@ try {
         work_dir      = $workDir
     }
     $lastJob | ConvertTo-Json | Set-Content -LiteralPath $script:WL_LAST_JOB -Encoding utf8
+    # Per-job copy so grab-frames can find the original source for ANY job,
+    # not just the most recent one (last-job.json gets overwritten).
+    $lastJob | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $workDir 'job.json') -Encoding utf8
 } catch {
     Write-Detail "could not write last-job registry: $($_.Exception.Message)"
 }
