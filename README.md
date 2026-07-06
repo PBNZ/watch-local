@@ -5,8 +5,18 @@ a fully local, GPU-accelerated port of `bradautomates/claude-video` that
 runs faster-whisper on your NVIDIA GPU via Docker Desktop. No cloud
 API keys.
 
-> This is a **beta** distribution. Windows host only. Tested on Windows
-> 11 with Docker Desktop (WSL2 backend) and an RTX Blackwell GPU.
+> **What this is (read first):** this plugin was **vibe-coded with Claude
+> for personal use** -- and turned out too useful not to share. It is
+> genuinely tested (92 pytest + 37 Pester, real end-to-end runs, CI with
+> the official strict plugin validator and safety scans), but it was built
+> for exactly one setup: **Claude Code on Windows 11 with an NVIDIA GPU
+> and Docker Desktop**. If your machine matches the prerequisites below,
+> it should just work. If it doesn't, expect to get your hands dirty --
+> issues and PRs welcome, support not promised.
+
+> This is a **pre-release (release candidate)** distribution. Windows host
+> only. Tested on Windows 11 with Docker Desktop (WSL2 backend) and an
+> RTX Blackwell GPU.
 
 ## What's in the box
 
@@ -23,13 +33,20 @@ API keys.
 
 ## Prerequisites
 
-- NVIDIA GPU (modern, including Blackwell sm_120)
-- Windows 11
-- Latest NVIDIA Game Ready / Studio driver
-- Docker Desktop with WSL2 backend + GPU support enabled
-- ~7 GB free disk for images, ~3 GB more for the default whisper model
+This is what the plugin is currently made for -- all of these are assumed:
 
-You do NOT need yt-dlp or ffmpeg installed on the host -- they live in containers.
+- **Claude Code** (CLI or desktop app) running on the Windows host
+- **Windows 11** (PowerShell 5.1 launcher; ships with Windows)
+- **NVIDIA GPU** (modern, including Blackwell sm_120) with the latest
+  Game Ready / Studio driver -- transcription runs on YOUR GPU, always
+- **Docker Desktop** with WSL2 backend + GPU support enabled
+- **Disk:** ~7 GB for images, ~3 GB more for the default whisper model
+- Internet access for video downloads (URL sources) and the one-time
+  image build / model pull
+
+Explicitly NOT supported right now: macOS, Linux hosts, CPU-only
+transcription, AMD/Intel GPUs. You do NOT need yt-dlp or ffmpeg installed
+on the host -- they live in containers.
 
 ## Install
 
@@ -109,8 +126,9 @@ Defaults:
 Destructive operations (purging jobs / models) are tightly gated:
 
 - Every purge previews exactly what will be deleted before doing anything.
-- A unique random confirmation token must be typed (or passed via
-  `-ConfirmToken`) per invocation.
+- A confirmation token must be typed (or passed via `-ConfirmToken`). The
+  token is derived from the exact target set shown in the preview, so a
+  confirmation can never apply to different targets than were previewed.
 - Scope invariant: deletion only targets paths *strictly inside* the
   configured `jobs_root` / `models_root` / `staging_root`. Anything
   outside those (including `./watch-local-output/`, your CWD, `$HOME`,

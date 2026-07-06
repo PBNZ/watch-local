@@ -17,15 +17,21 @@ user's machine via Docker Desktop:
 - All workers run in Docker containers via plain `docker run --rm`, on demand --
   nothing stays running between calls
 
-Beta. **Windows host only** -- this is a deliberate scope decision, not an
-accident. PowerShell 5.1 launcher, Docker Desktop (WSL2 backend) assumed.
+**Vibe-coded with Claude for personal use, shared because it's too useful
+not to.** Tested seriously (unit suites, real end-to-end runs, CI), but
+built for one setup: Claude Code on Windows 11 + NVIDIA GPU + Docker
+Desktop. Pre-release. **Windows host only** -- this is a deliberate scope
+decision, not an accident. PowerShell 5.1 launcher, Docker Desktop (WSL2
+backend) assumed.
 
 ## Prerequisites
 
+- Claude Code (CLI or desktop app) on the Windows host
 - NVIDIA GPU (any modern card, including Blackwell sm_120)
 - Windows 11 with up-to-date NVIDIA drivers
 - Docker Desktop with WSL2 backend + GPU support enabled
 - ~7 GB free disk for images + ~3 GB for the default whisper model
+- No macOS/Linux, no CPU-only mode, no AMD/Intel GPUs (yet)
 
 You do NOT need yt-dlp or ffmpeg on the host -- both run inside containers.
 
