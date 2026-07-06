@@ -149,7 +149,7 @@ if ($inputMountHost) {
     $runArgs += @('-v', "$(ConvertTo-DockerPath $inputMountHost):/input:ro")
 }
 $runArgs += @($script:WL_IMG_TOOLS, 'python3', '/app/stills.py')
-$code = Invoke-WLRun $runArgs
+$code = Invoke-WLRun $runArgs -Name 'grab-frames'
 if ($code -ne 0) {
     Write-Err "still extraction failed (exit $code)."
     exit $script:WL_EXIT.TOOLS_FAILED

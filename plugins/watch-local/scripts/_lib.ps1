@@ -348,8 +348,14 @@ function Invoke-WLCompose {
 # command. Returns the exit code; stdout streams via Out-Host like
 # Invoke-WLDocker.
 function Invoke-WLRun {
-    param([Parameter(Mandatory, Position=0)][string[]]$RunArgs)
-    Invoke-WLDocker -ArgList (@('run', '--rm') + $RunArgs)
+    param(
+        [Parameter(Mandatory, Position=0)][string[]]$RunArgs,
+        [string]$Name = 'worker'
+    )
+    # Meaningful container names in Docker Desktop (instead of random ones);
+    # random suffix so concurrent runs of the same stage never collide.
+    $cname = 'watch-local-{0}-{1}' -f $Name, (Get-Random -Maximum 99999)
+    Invoke-WLDocker -ArgList (@('run', '--rm', '--name', $cname) + $RunArgs)
 }
 
 #endregion

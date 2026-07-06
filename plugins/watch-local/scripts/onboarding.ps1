@@ -87,7 +87,7 @@ if ($LASTEXITCODE -ne 0) {
 Write-Output 'Docker CLI + daemon -- OK'
 
 Write-Output 'Probing GPU exposure to Docker (10-20s)...'
-& docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu22.04 nvidia-smi -L 2>$null | Out-Null
+& docker run --rm --name "watch-local-gpucheck-$(Get-Random -Maximum 99999)" --gpus all nvidia/cuda:12.8.0-base-ubuntu22.04 nvidia-smi -L 2>$null | Out-Null
 if ($LASTEXITCODE -ne 0) {
     Write-Err 'Docker cannot see your NVIDIA GPU. Steps to fix:'
     Write-Err '  1. Install the latest NVIDIA Game Ready / Studio driver.'

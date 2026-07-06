@@ -182,7 +182,7 @@ function _Json {
 function _GpuOk {
     Write-Stage 'checking GPU exposure to docker (10-20s)...'
     try {
-        & docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu22.04 nvidia-smi -L 2>$null | Out-Null
+        & docker run --rm --name "watch-local-gpucheck-$(Get-Random -Maximum 99999)" --gpus all nvidia/cuda:12.8.0-base-ubuntu22.04 nvidia-smi -L 2>$null | Out-Null
         return ($LASTEXITCODE -eq 0)
     } catch {
         return $false
@@ -233,7 +233,7 @@ function _Install {
             '-v', "$(ConvertTo-DockerPath $warmDir):/work",
             $script:WL_IMG_TOOLS, 'ffmpeg', '-hide_banner', '-loglevel', 'error',
             '-f', 'lavfi', '-i', 'anullsrc=cl=mono:r=16000', '-t', '1', '-b:a', '64k', '/work/audio.mp3'
-        ))
+        )) -Name 'warmup-audio'
         if ($code -ne 0) { throw "warm-up audio build failed (exit $code)" }
 
         $code = Invoke-WLRun ($script:WL_WHISPER_RUN_FLAGS + @(
@@ -242,7 +242,7 @@ function _Install {
             '-v', "$(ConvertTo-DockerPath $cfg.models_root):/models",
             '-v', "$(ConvertTo-DockerPath $workerDir):/app:ro",
             $script:WL_IMG_WHISPER, 'python3', '/app/whisper_run.py'
-        ))
+        )) -Name 'warmup-whisper'
         if ($code -ne 0) {
             Write-Warn "model warm-up returned exit $code -- first /watch may pull the model on demand."
         }

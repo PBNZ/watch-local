@@ -102,7 +102,9 @@ copies under `./watch-local-output/<slug>/`, which survive.)
 **Step 4 -- answer the user.** Cite timestamps. The report's
 **Comparison** line tells you which transcript is primary and the
 significance of any divergence. If significance == "major", surface
-that to the user as a confidence caveat.
+that to the user as a confidence caveat. When you present a screenshot
+or still, always state its full file path in the reply -- the user
+needs the path to use the file.
 
 **Step 5 -- if user wants to keep artifacts in their project**:
 suggest `/watch:save-here` (or re-running with `-SaveHere`).

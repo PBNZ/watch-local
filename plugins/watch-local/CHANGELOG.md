@@ -55,6 +55,15 @@ items addressed).
   and the cached model make repeats near-instant. Doc now says so.
 
 ### Changed
+- **Worker containers get meaningful names.** Docker Desktop now shows
+  `watch-local-tools-NNNNN`, `watch-local-whisper-NNNNN`,
+  `watch-local-compare-…`, `-screenshots-…`, `-grab-frames-…`,
+  `-warmup-…`, `-probe-…`, `-gpucheck-…` instead of random names (unique
+  suffix keeps concurrent runs collision-free).
+- **Stills replies must include the file path.** grab-frames/SKILL
+  instructions now require stating each still's full path when presenting
+  it -- the script always printed the paths, but replies could describe
+  the image without saying where the file landed.
 - **Tools image: yt-dlp refreshed + Deno added.** Deno is yt-dlp's
   recommended JavaScript runtime for YouTube's JS challenges (auto-detected
   on PATH; without it yt-dlp warns and some formats go missing). Rebuild

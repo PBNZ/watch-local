@@ -25,6 +25,11 @@ The script writes the stills into `<job>\screenshots\` and prints their paths.
 **Read each printed path** to view the screenshots, then present them to the
 user (or use them as the basis for whatever follow-up content was requested).
 
+**Always state each still's full file path in your reply** (e.g.
+``C:/Users/.../jobs/<slug>/screenshots/still_00_10.jpg``) -- the user needs
+the path to actually use the file; describing the image without it leaves
+them hunting for where it landed.
+
 Notes:
 - Works on URL jobs (the downloaded video is kept on disk). For local/UNC
   source jobs the original file is not copied by default, so grab-frames can

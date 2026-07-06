@@ -185,7 +185,7 @@ function Get-DownloadEstimateMB {
         # deadlocks at container-start on WSL2. stdout captured here for
         # the JSON estimate, so this can't go through Invoke-WLRun (which
         # routes stdout to Out-Host).
-        $out = & docker run --rm `
+        $out = & docker run --rm --name "watch-local-probe-$(Get-Random -Maximum 99999)" `
             -e "W_URL=$Url" `
             -e "W_MAX_HEIGHT=$MaxHeight" `
             -v "$(ConvertTo-DockerPath $workerDir):/app:ro" `
@@ -277,7 +277,7 @@ Write-Stage "running tools container..."
 if ($DryRun) {
     Write-Stage "DRY RUN: docker run --rm $($toolsRunArgs -join ' ')"
 } else {
-    $code = Invoke-WLRun $toolsRunArgs
+    $code = Invoke-WLRun $toolsRunArgs -Name 'tools'
     if ($code -ne 0) {
         Write-Err "tools container failed (exit $code)"
         exit $script:WL_EXIT.TOOLS_FAILED
@@ -316,7 +316,7 @@ if ($DryRun) {
         '-v', "$(ConvertTo-DockerPath $workerDir):/app:ro"
     )
     $whisperRunArgs = $script:WL_WHISPER_RUN_FLAGS + $whisperEnv + $whisperMounts + @($script:WL_IMG_WHISPER, 'python3', '/app/whisper_run.py')
-    $code = Invoke-WLRun $whisperRunArgs
+    $code = Invoke-WLRun $whisperRunArgs -Name 'whisper'
     if ($code -eq 0) {
         $whisperTranscript = Read-UTF8 (Join-Path $workDir 'transcript_whisper.json') | ConvertFrom-Json
         $whisperOk = $true
@@ -352,7 +352,7 @@ if ($DryRun) {
     )
     Write-Stage "running comparison stage..."
     $cmpRunArgs = $cmpEnv + $cmpMounts + @($script:WL_IMG_TOOLS, 'python3', '/app/compare.py')
-    $code = Invoke-WLRun $cmpRunArgs
+    $code = Invoke-WLRun $cmpRunArgs -Name 'compare'
     if ($code -eq 0) {
         $comparison = Read-UTF8 (Join-Path $workDir 'comparison.json') | ConvertFrom-Json
     } else {
@@ -664,7 +664,7 @@ if (-not $DryRun -and $Screenshots) {
             '-e', 'W_OUT_DIR=/work/screenshots',
             '-e', "W_STILL_RES=$StillResolution"
         )
-        $code = Invoke-WLRun ($shotEnv + $shotMounts + @($script:WL_IMG_TOOLS, 'python3', '/app/stills.py'))
+        $code = Invoke-WLRun ($shotEnv + $shotMounts + @($script:WL_IMG_TOOLS, 'python3', '/app/stills.py')) -Name 'screenshots'
         $shotsDir = Join-Path $workDir 'screenshots'
         if ($code -eq 0 -and (Test-Path -LiteralPath $shotsDir)) {
             $shotFiles = @(Get-ChildItem -LiteralPath $shotsDir -File -ErrorAction SilentlyContinue |
