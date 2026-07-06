@@ -12,4 +12,6 @@ Command:
 powershell.exe -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/onboarding.ps1" $ARGUMENTS
 ```
 
-If the user has previously completed setup, the wizard idempotently re-verifies and skips already-done steps. Tell the user upfront that the slow steps are: whisper image build (~5-15 min) and whisper model download (~3 GB for large-v3, the default). Pause for confirmation before kicking those off if the user appears time-constrained.
+If the user has previously completed setup, re-running is safe: the wizard re-runs the image build and model warm-up, but Docker's layer cache and the cached model make those near-instant (it re-verifies rather than explicitly skipping). Tell the user upfront that the slow steps ON FIRST RUN are: whisper image build (~5-15 min) and whisper model download (~3 GB for large-v3, the default). Pause for confirmation before kicking those off if the user appears time-constrained.
+
+The wizard prompts on stdin, which does not work from a non-interactive shell (including your own shell tool -- it exits 2 with guidance rather than hanging). In that case pass defaults up front instead: `-Yes` accepts every default, plus optional `-Model <name>` / `-SkipSmoke`. For a status probe only, use `scripts/setup.ps1 -Check`.

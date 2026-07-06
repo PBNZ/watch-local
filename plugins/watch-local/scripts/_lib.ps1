@@ -387,10 +387,25 @@ function Convert-WLTime([string]$value) {
 
 #region Confirm
 
-# Generate a random uppercase token. Used to gate destructive purges.
-function New-ConfirmToken([string]$prefix = 'CONFIRM') {
+# Generate an uppercase token. Used to gate destructive purges.
+# With -Seed (the exact purge target set), the token is deterministic: a
+# non-interactive caller runs once to see the preview + token, then re-runs
+# with -*ConfirmToken to proceed. If the target set changed between the two
+# runs the token changes too, so the confirmation stays bound to exactly
+# what was previewed. (A random token here made non-interactive
+# confirmation impossible -- regenerated every invocation, so a token from
+# the preview run could never match the confirm run.)
+function New-ConfirmToken([string]$prefix = 'CONFIRM', [string]$Seed = '') {
     $alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'  # no 0/O/1/I
-    $rnd = -join (1..6 | ForEach-Object { $alphabet[(Get-Random -Maximum $alphabet.Length)] })
+    if ($Seed) {
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $bytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($Seed))
+        } finally { $sha.Dispose() }
+        $rnd = -join (0..5 | ForEach-Object { $alphabet[[int]$bytes[$_] % $alphabet.Length] })
+    } else {
+        $rnd = -join (1..6 | ForEach-Object { $alphabet[(Get-Random -Maximum $alphabet.Length)] })
+    }
     return "$prefix-$rnd"
 }
 
@@ -404,6 +419,13 @@ function Request-Confirm {
     if ($NonInteractiveToken) {
         if ($NonInteractiveToken -ceq $ExpectedToken) { return $true }
         Write-Err "confirmation token mismatch (got '$NonInteractiveToken', expected '$ExpectedToken')"
+        return $false
+    }
+    if ([Console]::IsInputRedirected) {
+        # Non-interactive host: ReadLine would block forever on
+        # redirected-but-open stdin. Cancel cleanly -- the preview above
+        # already printed the token; re-run with the token parameter.
+        Write-Err 'non-interactive session: re-run with the confirmation token parameter shown in the preview above.'
         return $false
     }
     [Console]::Error.WriteLine('')

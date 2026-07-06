@@ -10,8 +10,10 @@ watch-local runs entirely on your machine. What it does, and does not do:
 - Writes artifacts to `%LOCALAPPDATA%\watch-local\` (and `%TEMP%` staging for
   UNC sources). Nothing is written into the plugin install directory.
 - Every destructive operation (purge/cleanup) is preview-first, requires a
-  random confirmation token, and is scope-guarded to the configured roots
-  (`Assert-InsideRoot`, exit 60 on violation).
+  confirmation token, and is scope-guarded to the configured roots
+  (`Assert-InsideRoot`, exit 60 on violation). The token is derived from the
+  exact target set shown in the preview, so a confirmation can never apply
+  to different targets than were previewed.
 - The SessionStart hook is a single `Test-Path` on a marker file.
 
 CI runs `claude plugin validate --strict` plus safety scans (invisible

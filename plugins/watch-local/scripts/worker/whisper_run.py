@@ -32,6 +32,41 @@ def _env(name: str, default: str = "") -> str:
     return v if v != "" else default
 
 
+def collapse_repetitions(segments: list[dict], min_run: int = 3) -> tuple[list[dict], list[dict]]:
+    """Collapse runs of >= min_run consecutive identical segment texts.
+
+    Whisper's classic repetition-loop hallucination emits the same line
+    over and over ("You put the work in" x15). Keep one segment spanning
+    the whole run and report the run so the host can flag the span as
+    suspect. Runs shorter than min_run are left alone -- deliberate
+    repetition ("no, no, no") is normal speech.
+    # ponytail: exact-match only; near-duplicate loops pass through.
+    # Upgrade path: condition_on_previous_text=False if loops keep landing.
+    """
+    out: list[dict] = []
+    runs: list[dict] = []
+    i = 0
+    while i < len(segments):
+        j = i
+        while j + 1 < len(segments) and segments[j + 1]["text"] == segments[i]["text"]:
+            j += 1
+        count = j - i + 1
+        if count >= min_run:
+            seg = dict(segments[i])
+            seg["end"] = segments[j]["end"]
+            out.append(seg)
+            runs.append({
+                "start": segments[i]["start"],
+                "end": segments[j]["end"],
+                "text": segments[i]["text"][:60],
+                "count": count,
+            })
+        else:
+            out.extend(segments[i:j + 1])
+        i = j + 1
+    return out, runs
+
+
 def main() -> int:
     if not AUDIO.exists():
         print(f"ERROR: audio not found at {AUDIO}", file=sys.stderr)
@@ -71,12 +106,22 @@ def main() -> int:
                 file=sys.stderr, flush=True,
             )
 
+    segments_list, repetition_runs = collapse_repetitions(segments_list)
+    if repetition_runs:
+        for r in repetition_runs:
+            print(
+                f"[whisper] WARNING: repetition loop collapsed at "
+                f"{r['start']:.0f}-{r['end']:.0f}s ({r['count']}x '{r['text']}')",
+                file=sys.stderr, flush=True,
+            )
+
     out = {
         "model": model_name,
         "language": info.language,
         "language_probability": float(info.language_probability),
         "duration": float(info.duration),
         "segments": segments_list,
+        "repetition_runs": repetition_runs,
     }
 
     OUT.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")

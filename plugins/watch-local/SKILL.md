@@ -74,7 +74,7 @@ Optional flags (PowerShell named params -- pass as `-Name Value`):
 | `-SaveHere` | Promote artifacts into `./watch-local-output/<slug>/` after the run. Exclusive with `-OutDir`. |
 | `-IncludeSource` | When `-SaveHere`, copy local/UNC source too (default = source-link.txt only). |
 | `-MoveOnSave` | When `-SaveHere`, move the canonical dir instead of copy. |
-| `-Cleanup` | Delete the job dir at the end of THIS call. Scope-locked to `jobs_root`. |
+| `-Cleanup` | Delete the job dir at the end of THIS call. Scope-locked to `jobs_root`. **Transcript-only unless combined with `-SaveHere`:** frames are deleted before you get a turn to Read them. |
 | `-NoCompare` | Skip the creator-vs-whisper comparison stage. |
 | `-PrimaryOverride creator|whisper` | Force primary transcript. |
 | `-DryRun` | Print docker invocations, don't execute. |
@@ -83,6 +83,21 @@ Optional flags (PowerShell named params -- pass as `-Name Value`):
 **Step 3 -- Read every frame the script lists.** Forward-slash Windows
 paths (`C:/Users/.../jobs/<slug>/frames/frame_NNNN.jpg`). Read them in
 a single message for parallel image rendering.
+
+**`-Cleanup` caveat:** under `-Cleanup` the frames are already deleted by
+the time the report reaches you -- the report says so and lists no paths.
+Visual analysis and `-Cleanup` in a single call are mutually exclusive.
+For zero-footprint + visual analysis, run WITHOUT `-Cleanup`, Read the
+frames, then delete the job:
+
+```bash
+powershell.exe -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/setup.ps1" -PurgeJob -Slug <slug>
+# prints a preview + confirm token, then:
+powershell.exe -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/setup.ps1" -PurgeJob -Slug <slug> -JobConfirmToken <token>
+```
+
+(`-Cleanup -SaveHere` together also works: the report lists the promoted
+copies under `./watch-local-output/<slug>/`, which survive.)
 
 **Step 4 -- answer the user.** Cite timestamps. The report's
 **Comparison** line tells you which transcript is primary and the
@@ -104,6 +119,12 @@ Comparison stage emits three metrics (length ratio, word Jaccard,
 3-gram Jaccard) and a worst-of-three `significance` score
 (`match` / `minor` / `major`). Major divergence triggers a `**Note:**`
 callout in the report.
+
+Whisper repetition loops (the same line hallucinated many times in a
+row) are collapsed to a single segment, and the report flags the
+affected timespan(s) in a `**Note:**` callout -- treat Whisper output
+near those spans as unreliable and prefer creator captions there.
+Surface that callout to the user when it appears.
 
 ## Partial failures
 

@@ -401,7 +401,9 @@ function _PreviewAndConfirm {
     )
     $bytes = 0
     foreach ($t in $Targets) { $bytes += $t.SizeBytes }
-    $token = New-ConfirmToken $TokenPrefix
+    # Seed the token with the exact target set so preview run + confirm run
+    # (two separate non-interactive invocations) agree on the token.
+    $token = New-ConfirmToken $TokenPrefix -Seed (($Targets | ForEach-Object { $_.Path }) -join '|')
 
     [Console]::Error.WriteLine('================================')
     [Console]::Error.WriteLine(' PURGE PREVIEW -- REVIEW CAREFULLY')

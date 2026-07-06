@@ -132,6 +132,12 @@ Describe 'Confirm token helpers' {
     It 'Request-Confirm rejects mismatched non-interactive token' {
         Request-Confirm -ExpectedToken 'X' -NonInteractiveToken 'Y' | Should -BeFalse
     }
+
+    It 'seeded tokens are deterministic per target set' {
+        (New-ConfirmToken 'TEST' -Seed 'C:\jobs\a') | Should -Be (New-ConfirmToken 'TEST' -Seed 'C:\jobs\a')
+        (New-ConfirmToken 'TEST' -Seed 'C:\jobs\a') | Should -Match '^TEST-[A-Z2-9]{6}$'
+        (New-ConfirmToken 'TEST' -Seed 'C:\jobs\a') | Should -Not -Be (New-ConfirmToken 'TEST' -Seed 'C:\jobs\b')
+    }
 }
 
 Describe 'Partial SHA helper' {

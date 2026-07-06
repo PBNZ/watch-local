@@ -532,18 +532,54 @@ if ($comparison -and $comparison.significance -eq 'major') {
     Write-Output "> **Note:** noticeable divergence between creator captions and local Whisper. Spot-check spoken proper nouns / technical terms -- one source may be wrong."
 }
 
+# Localized hallucination bursts (repetition loops) don't move the global
+# comparison metrics enough to flag, so surface them explicitly.
+$repRuns = @()
+if ($whisperOk) {
+    $repRuns = @((Get-WLInfoProp $whisperTranscript 'repetition_runs') | Where-Object { $null -ne $_ })
+}
+if ($repRuns.Count -gt 0) {
+    $spans = ($repRuns | ForEach-Object {
+        '{0}-{1} ("{2}" x{3})' -f (Format-WLTime ([double]$_.start)), (Format-WLTime ([double]$_.end)), $_.text, $_.count
+    }) -join '; '
+    Write-Output ""
+    Write-Output "> **Note:** Whisper repetition loop(s) collapsed (hallucination artifact) at: $spans. Treat Whisper output near these spans as unreliable; prefer creator captions there when available."
+}
+
 Write-Output ""
 Write-Output "## Frames"
 Write-Output ""
-$framesHostDir = ConvertTo-DockerPath (Join-Path $workDir 'frames')
-Write-Output "Frames live at: ``$framesHostDir``"
-Write-Output ""
-Write-Output "**Read each frame path below with the Read tool to view the image.** Frames are in chronological order; ``t=MM:SS`` is the absolute timestamp in the source video."
-Write-Output ""
-foreach ($frame in $intermediate.frames) {
-    $hostPath = ConvertTo-HostPath -ContainerPath ([string]$frame.path) -WorkHost $workDir -InputHost $inputMountHost
-    $stamp = Format-WLTime ([double]$frame.timestamp_seconds)
-    Write-Output "- ``$hostPath`` (t=$stamp)"
+# -Cleanup deletes the job dir when this command exits, i.e. before the
+# caller can Read anything -- so never list canonical paths under -Cleanup.
+# With -SaveHere the promoted copies survive; list those instead.
+$promotedDir = if ($SaveHere) { Join-Path (Join-Path $PWD.Path 'watch-local-output') $slug } else { $null }
+if ($Cleanup -and -not $SaveHere) {
+    Write-Output "**-Cleanup is active: frame files are deleted when this command exits -- do NOT try to Read them (transcript-only mode).**"
+    Write-Output ""
+    Write-Output "For visual analysis with zero leftover footprint, re-run WITHOUT -Cleanup, Read the frames, then remove the job dir with:"
+    Write-Output ""
+    Write-Output "``powershell -File `"$PSScriptRoot\setup.ps1`" -PurgeJob -Slug $slug``"
+    Write-Output ""
+    Write-Output "(prints a preview + confirm token; re-run the same command with ``-JobConfirmToken <token>`` to delete)"
+} else {
+    $framesBase = if ($Cleanup) { Join-Path $promotedDir 'frames' } else { Join-Path $workDir 'frames' }
+    Write-Output "Frames live at: ``$(ConvertTo-DockerPath $framesBase)``"
+    if ($Cleanup) {
+        Write-Output ""
+        Write-Output "_(-Cleanup deletes the canonical job dir at exit; the paths below are the -SaveHere promoted copies.)_"
+    }
+    Write-Output ""
+    Write-Output "**Read each frame path below with the Read tool to view the image.** Frames are in chronological order; ``t=MM:SS`` is the absolute timestamp in the source video."
+    Write-Output ""
+    foreach ($frame in $intermediate.frames) {
+        $hostPath = if ($Cleanup) {
+            ConvertTo-DockerPath (Join-Path $framesBase (Split-Path -Leaf ([string]$frame.path)))
+        } else {
+            ConvertTo-HostPath -ContainerPath ([string]$frame.path) -WorkHost $workDir -InputHost $inputMountHost
+        }
+        $stamp = Format-WLTime ([double]$frame.timestamp_seconds)
+        Write-Output "- ``$hostPath`` (t=$stamp)"
+    }
 }
 
 Write-Output ""
@@ -587,7 +623,11 @@ if ($secondarySegments -and $secondarySegments.Count -gt 0) {
 
 Write-Output ""
 Write-Output "---"
-Write-Output "_Work dir: ``$(ConvertTo-DockerPath $workDir)`` -- delete when done (or re-run with -Cleanup)._"
+if ($Cleanup) {
+    Write-Output "_Work dir ``$(ConvertTo-DockerPath $workDir)`` is deleted when this command exits (-Cleanup)._"
+} else {
+    Write-Output "_Work dir: ``$(ConvertTo-DockerPath $workDir)`` -- delete when done via ``setup.ps1 -PurgeJob -Slug $slug`` (or re-run with -Cleanup)._"
+}
 
 #endregion
 
@@ -633,9 +673,15 @@ if (-not $DryRun -and $Screenshots) {
                 Write-Output ""
                 Write-Output "## Screenshots ($resLabel)"
                 Write-Output ""
-                Write-Output "Full-resolution stills of the requested moments. Read these paths to view:"
-                foreach ($f in $shotFiles) {
-                    Write-Output "- ``$(ConvertTo-DockerPath $f.FullName)``"
+                if ($Cleanup -and -not $SaveHere) {
+                    # Same rule as frames: gone before the caller can Read.
+                    Write-Output "**-Cleanup is active: screenshot files are deleted when this command exits -- do NOT try to Read them.** Re-run without -Cleanup to view."
+                } else {
+                    Write-Output "Full-resolution stills of the requested moments. Read these paths to view:"
+                    foreach ($f in $shotFiles) {
+                        $shotPath = if ($Cleanup) { Join-Path (Join-Path $promotedDir 'screenshots') $f.Name } else { $f.FullName }
+                        Write-Output "- ``$(ConvertTo-DockerPath $shotPath)``"
+                    }
                 }
             }
         } else {
@@ -665,16 +711,30 @@ try {
     Write-Detail "could not write last-job registry: $($_.Exception.Message)"
 }
 
+$promoteOk = $true
 if ($SaveHere) {
     $promoteScript = Join-Path $PSScriptRoot 'save-here.ps1'
-    $promoteArgs = @('-Slug', $slug, '-Cwd', $PWD.Path)
-    if ($IncludeSource) { $promoteArgs += '-IncludeSource' }
-    if ($MoveOnSave)    { $promoteArgs += '-MoveOnSave' }
+    # Hashtable splat, NOT an array of '-Name' strings: PS 5.1 array
+    # splatting bound '-Cwd' positionally and threw, so promotion never
+    # worked from this call site.
+    $promoteArgs = @{ Slug = $slug; Cwd = $PWD.Path }
+    if ($IncludeSource) { $promoteArgs.IncludeSource = $true }
+    if ($MoveOnSave)    { $promoteArgs.MoveOnSave = $true }
     Write-Stage "promoting artifacts to current directory..."
+    $promoteOk = $false
     try {
         & $promoteScript @promoteArgs
+        $promoteOk = ($LASTEXITCODE -eq 0)
     } catch {
         Write-Warn "promote failed: $($_.Exception.Message)"
+    }
+    if (-not $promoteOk) {
+        Write-Warn "promote failed -- canonical job dir kept under jobs_root."
+    } elseif ($Cleanup) {
+        # save-here just said the canonical copy is "still present until you
+        # purge it" -- not true when -Cleanup deletes it next.
+        Write-Output ""
+        Write-Output "_(-Cleanup: the canonical copy under jobs_root is removed at exit -- use only the promoted paths above.)_"
     }
 }
 
@@ -694,6 +754,11 @@ if ($stagedDir -and (Test-Path -LiteralPath $stagedDir)) {
 if ($Cleanup) {
     if ($OutDir) {
         Write-Warn "-Cleanup ignored when -OutDir is set (scope guard)."
+    } elseif (-not $promoteOk) {
+        # Deleting the canonical dir after a failed promote would destroy
+        # the only copy while the report points at promoted paths that
+        # don't exist.
+        Write-Warn "-Cleanup skipped: -SaveHere promotion failed; canonical dir kept: $workDir"
     } else {
         try {
             Assert-InsideRoot -Target $workDir -Root $jobsRoot

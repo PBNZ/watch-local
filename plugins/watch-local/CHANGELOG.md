@@ -2,6 +2,65 @@
 
 ## [Unreleased]
 
+## 0.3.0-rc.2 -- 2026-07-06
+
+Fixes from the first real dogfood session's feedback (all five reported
+items addressed).
+
+### Fixed
+- **`-SaveHere` from watch.ps1 never worked (and could pair with `-Cleanup`
+  to delete the only copy).** The promote call passed save-here.ps1 an
+  array of `'-Name'` strings, which PS 5.1 splatting bound positionally
+  (`A positional parameter cannot be found that accepts argument '-Cwd'`),
+  so promotion always failed -- and `-Cleanup` then deleted the canonical
+  dir anyway, leaving the report pointing at promoted paths that were never
+  created. Now uses hashtable splatting, and `-Cleanup` is skipped (with a
+  warning) whenever the promotion did not succeed. Proven by a real
+  `-Cleanup -SaveHere` run: promoted frames exist on disk after exit,
+  canonical dir removed. (Standalone `/watch:save-here` was never affected
+  -- it binds args normally.)
+- **Non-interactive purge confirmation was impossible.** The confirm token
+  was regenerated randomly on every invocation, so a token printed by a
+  preview run could never match the confirm run -- `-JobConfirmToken` /
+  `-ConfirmToken` / `-AllConfirmToken` could only ever fail. Tokens are now
+  deterministic over the exact purge target set (SHA-256-derived), so the
+  two-run flow works: run once for preview + token, re-run with the token to
+  proceed. If the target set changed in between, the token changes and the
+  purge refuses -- the confirmation stays bound to exactly what was
+  previewed. `Request-Confirm` also fails fast with guidance when stdin is
+  redirected instead of blocking forever on `ReadLine`. +3 Pester tests
+  including the full two-run flow against a sandboxed jobs_root.
+- **`-Cleanup` no longer tells the model to Read frames it just deleted.**
+  `-Cleanup` deletes the job dir before the caller gets a turn, so visual
+  analysis + `-Cleanup` in one call is impossible by construction. The
+  report now says so: under `-Cleanup` alone it lists no frame/screenshot
+  paths and prints the two-step alternative (run without `-Cleanup`, Read
+  frames, then `setup.ps1 -PurgeJob -Slug <slug>` + token). Under
+  `-Cleanup -SaveHere` it lists the promoted copies under
+  `./watch-local-output/<slug>/`, which survive. SKILL.md documents the
+  interaction.
+- **Whisper repetition-loop hallucinations are collapsed and flagged.**
+  Runs of 3+ consecutive identical segments (e.g. "You put the work in"
+  x15) are collapsed to a single segment spanning the run, and the report
+  emits a `**Note:**` naming the affected timespan(s) -- localized
+  hallucination bursts don't move the global comparison metrics enough to
+  flag on their own. Deliberate short repetition ("no, no") is untouched.
+  +5 pytest (92 total).
+- **Onboarding wizard no longer hangs in non-interactive shells.** It
+  detects redirected stdin and exits 2 with the flag-driven alternative
+  (`-Yes`, `-Model`, `-SkipSmoke`, or `setup.ps1 -Check`) instead of
+  blocking on `Console.ReadLine()`.
+- **`/watch-setup` command doc no longer claims idempotent step-skipping.**
+  The wizard re-runs the image build and model warm-up; Docker layer cache
+  and the cached model make repeats near-instant. Doc now says so.
+
+### Changed
+- **Tools image: yt-dlp refreshed + Deno added.** Deno is yt-dlp's
+  recommended JavaScript runtime for YouTube's JS challenges (auto-detected
+  on PATH; without it yt-dlp warns and some formats go missing). Rebuild
+  with `/watch-setup` or `docker compose build --no-cache tools` to pick
+  this up.
+
 ## 0.3.0-rc.1 -- 2026-07-04
 
 Daily-use hardening + publish-prep release candidate. Stays a pre-release

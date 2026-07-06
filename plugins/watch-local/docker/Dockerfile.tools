@@ -17,7 +17,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # yt-dlp: install via pip so updates are easy (rebuild this image only,
 # whisper image untouched). Pin a recent floor; latest from PyPI on build.
-RUN pip install --upgrade "yt-dlp>=2026.1.0"
+# [default] extras pull in yt-dlp-ejs (the bundled EJS challenge-solver
+# scripts) so YouTube JS challenges solve offline -- no
+# --remote-components downloads at runtime. See yt-dlp wiki/EJS.
+RUN pip install --upgrade "yt-dlp[default]>=2026.1.0"
+
+# Deno: yt-dlp's recommended JS runtime for YouTube's JS challenges
+# (auto-detected on PATH, min 2.3.0 -- see yt-dlp wiki/EJS). Without it
+# yt-dlp warns and some formats go missing.
+RUN apt-get update && apt-get install -y --no-install-recommends unzip \
+    && curl -fsSL https://github.com/denoland/deno/releases/latest/download/deno-x86_64-unknown-linux-gnu.zip -o /tmp/deno.zip \
+    && unzip -q /tmp/deno.zip -d /usr/local/bin \
+    && rm /tmp/deno.zip \
+    && apt-get purge -y unzip && rm -rf /var/lib/apt/lists/* \
+    && deno --version
 
 WORKDIR /app
 

@@ -38,6 +38,16 @@ $ErrorActionPreference = 'Stop'
 $setupScript = Join-Path $PSScriptRoot 'setup.ps1'
 $watchScript = Join-Path $PSScriptRoot 'watch.ps1'
 
+# The wizard reads stdin. Under a non-interactive host (agent shell tool,
+# CI) ReadLine blocks forever on redirected-but-open stdin -- fail fast
+# with the flag-driven alternative instead of hanging.
+if (-not $Yes -and [Console]::IsInputRedirected) {
+    Write-Err 'non-interactive session detected (stdin is redirected) -- the wizard cannot prompt.'
+    Write-Err 'Re-run with -Yes to accept all defaults (add -Model <name> / -SkipSmoke as needed),'
+    Write-Err "or use `"$setupScript`" -Check for a status probe."
+    exit 2
+}
+
 function _Prompt([string]$prompt, [string]$default) {
     if ($Yes) { return $default }
     [Console]::Error.Write("$prompt [default: $default] ")

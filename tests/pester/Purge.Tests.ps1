@@ -61,10 +61,15 @@ BeforeAll {
         foreach ($a in $ArgList) {
             if ($a -match '\s') { $quoted += "`"$a`"" } else { $quoted += $a }
         }
+        # Redirect stdin from an empty file so a token-less run takes the
+        # deterministic non-interactive path (preview + refuse) instead of
+        # blocking on ReadLine.
+        $stdinFile = New-TemporaryFile
         $oldLocalAppData = $env:LOCALAPPDATA
         try {
             $env:LOCALAPPDATA = $LocalAppData
             $p = Start-Process -FilePath 'powershell.exe' -ArgumentList $quoted `
+                -RedirectStandardInput  $stdinFile.FullName `
                 -RedirectStandardOutput $stdoutFile.FullName `
                 -RedirectStandardError  $stderrFile.FullName `
                 -Wait -NoNewWindow -PassThru
@@ -74,6 +79,7 @@ BeforeAll {
             $env:LOCALAPPDATA = $oldLocalAppData
             Remove-Item -LiteralPath $stdoutFile.FullName -Force -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $stderrFile.FullName -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $stdinFile.FullName -Force -ErrorAction SilentlyContinue
         }
     }
 }
@@ -152,5 +158,42 @@ Describe 'PurgeAllJobs hardest gate' {
         } finally {
             if ($prior) { $env:WATCH_LOCAL_I_REALLY_MEAN_IT = $prior }
         }
+    }
+}
+
+Describe 'Non-interactive two-run purge flow' {
+    # The agent-facing flow: run 1 (no token) prints the preview + token and
+    # refuses; run 2 passes that token back and the purge proceeds. Requires
+    # the token to be deterministic over the target set.
+    BeforeEach {
+        $script:S = _NewSandbox
+    }
+    AfterEach {
+        Remove-Item -LiteralPath $S.Sandbox -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'preview run refuses without hanging and prints a token; confirm run deletes' {
+        $dir = _SeedJob -JobsRoot $S.JobsRoot -Slug 'throwaway'
+        $out1 = _RunSetup -LocalAppData $S.AppData -ArgList @('-PurgeJob','-Slug','throwaway')
+        $script:_lastCode | Should -Be 60
+        Test-Path $dir | Should -BeTrue
+        $out1 | Should -Match 'To proceed, type:\s+(PURGE-JOB-[A-Z2-9]{6})'
+        $token = ([regex]'To proceed, type:\s+(PURGE-JOB-[A-Z2-9]{6})').Match($out1).Groups[1].Value
+
+        $out2 = _RunSetup -LocalAppData $S.AppData -ArgList @('-PurgeJob','-Slug','throwaway','-JobConfirmToken',$token)
+        $script:_lastCode | Should -Be 0
+        Test-Path $dir | Should -BeFalse
+    }
+
+    It 'token from a different target does not confirm' {
+        $dirA = _SeedJob -JobsRoot $S.JobsRoot -Slug 'job-a'
+        $dirB = _SeedJob -JobsRoot $S.JobsRoot -Slug 'job-b'
+        $outA = _RunSetup -LocalAppData $S.AppData -ArgList @('-PurgeJob','-Slug','job-a')
+        $tokenA = ([regex]'To proceed, type:\s+(PURGE-JOB-[A-Z2-9]{6})').Match($outA).Groups[1].Value
+
+        _RunSetup -LocalAppData $S.AppData -ArgList @('-PurgeJob','-Slug','job-b','-JobConfirmToken',$tokenA) | Out-Null
+        $script:_lastCode | Should -Be 60
+        Test-Path $dirB | Should -BeTrue
+        Test-Path $dirA | Should -BeTrue
     }
 }
