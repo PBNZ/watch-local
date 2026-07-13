@@ -1,5 +1,5 @@
 ---
-description: Watch a video (URL, local path, or SMB/UNC share). Downloads with yt-dlp, extracts frames with ffmpeg, ALWAYS transcribes with faster-whisper on the local NVIDIA GPU and compares against creator captions when present. No cloud keys.
+description: Watch a video (URL, local path, or SMB/UNC share). Downloads with yt-dlp, extracts frames with ffmpeg, ALWAYS transcribes with faster-whisper locally (NVIDIA GPU when detected, CPU otherwise) and compares against creator captions when present. No cloud keys.
 argument-hint: <video-url-or-path> [question] [-Start T -End T -SaveHere -OutDir D -Cleanup -Model name]
 allowed-tools: [Bash, Read, AskUserQuestion]
 ---

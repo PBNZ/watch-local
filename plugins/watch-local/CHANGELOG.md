@@ -2,6 +2,58 @@
 
 ## [Unreleased]
 
+## 0.4.0-rc.1 -- 2026-07-14
+
+GPU auto-detection, NVDEC-accelerated decode, and a fully working
+CPU-only mode (including non-Windows hosts).
+
+### Added
+- **Reliable GPU detection, persisted in config.** Setup (and a new
+  `setup.ps1 -DetectGpu` mode) probes the GPU through docker itself --
+  `nvidia-smi` for identity (name, VRAM, driver, compute cap) plus a real
+  NVDEC decode test (`h264_cuvid` on a generated clip) -- and stores the
+  result as the `gpu` block in config.json. Pre-upgrade installs migrate
+  automatically: the first `/watch` runs the probe once and persists it.
+- **NVDEC video decode for frame extraction.** When the detected GPU has
+  working NVDEC, the tools/screenshots/grab-frames containers run with
+  `--gpus all` + `NVIDIA_DRIVER_CAPABILITIES=compute,video,utility` and
+  ffmpeg decodes on the GPU (`-hwaccel cuda`, decode-only offload -- the
+  fps/scale filter chain is unchanged). The Debian ffmpeg in the existing
+  tools image already ships every cuvid/NVDEC decoder; no image change.
+  If hwaccel init fails at runtime, ffmpeg falls back to software decode
+  on its own (verified).
+- **CPU-only mode -- the plugin now fully works without an NVIDIA GPU.**
+  No GPU detected: setup builds a new slim `watch-local/whisper:cpu`
+  image (`Dockerfile.whisper-cpu`, ~1 GB instead of ~8.7 GB CUDA image)
+  and whisper runs with `device=cpu` / `compute_type=int8` (the
+  documented faster-whisper CPU configuration). The wizard recommends the
+  `small` model on CPU; `/watch` warns when `large-v3` is used on CPU.
+  A missing GPU is no longer a fatal setup error (exit 12 retired from
+  the install path).
+- **Non-Windows hosts (CPU mode).** Launcher scripts now run under
+  PowerShell 7 on Linux/macOS: platform-aware default dirs
+  (`$XDG_DATA_HOME`/`~/.local/share` + system temp instead of
+  LOCALAPPDATA/TEMP), no Windows-only path literals, child scripts spawn
+  with the running engine (`pwsh` vs `powershell.exe`), and the
+  SessionStart hook resolves the marker path on any OS.
+- **Report transparency.** Every report now carries a `**Compute:**` line
+  (GPU name + NVDEC/CPU decode + whisper device) and the `**Whisper:**`
+  line states the device it ran on.
+
+### Changed
+- `docker-compose.yml` gains a `whisper-cpu` service; setup builds only
+  the whisper variant matching the detected mode. `setup.ps1 -Check` /
+  `-Json` accept whichever whisper image matches the configured mode
+  (either variant when detection hasn't run yet).
+- Onboarding wizard: GPU probe replaced by detection via the tools image
+  (no more `nvidia/cuda` base-image pull just for the check), CPU-aware
+  model recommendations, engine-aware command hints.
+
+### Tests
+- +10 pytest (hwaccel arg injection into extract/stills commands; audio
+  extraction never uses hwaccel) and +15 Pester (probe parsing, mode
+  selection, tools GPU flags, platform dirs, config gpu round-trip).
+
 ## 0.3.0-rc.2 -- 2026-07-06
 
 Fixes from the first real dogfood session's feedback (all five reported

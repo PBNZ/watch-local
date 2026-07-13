@@ -1,16 +1,19 @@
 # /watch-local
 
-**Give Claude the ability to watch any video -- fully local, on your NVIDIA GPU.**
+**Give Claude the ability to watch any video -- fully local, on your own hardware.**
 
 A port of [`bradautomates/claude-video`](https://github.com/bradautomates/claude-video)
 that drops the cloud Whisper backends (Groq / OpenAI) and runs everything on the
-user's machine via Docker Desktop:
+user's machine via Docker:
 
 - Downloads with `yt-dlp` -- public URLs (YouTube, Vimeo, X, TikTok, Twitch, hundreds more)
 - Extracts auto-scaled survey frames with `ffmpeg` (768px default), plus
   on-demand **native-resolution** stills (`-Screenshots`, `/watch:grab-frames`)
-- **Always transcribes with faster-whisper `large-v3` on your local NVIDIA GPU**
-  (when the source has an audio track)
+- **Always transcribes with faster-whisper locally** (when the source has an
+  audio track) -- CUDA on a detected NVIDIA GPU, int8 CPU otherwise
+- **Auto-detects your NVIDIA GPU** at setup: GPU machines get NVDEC video
+  decode for frame extraction AND CUDA whisper; machines without one run a
+  fully working CPU-only mode
 - When creator-uploaded captions exist, they are primary and Whisper is a
   compared secondary -- the report carries a similarity score and flags major
   divergence
@@ -19,19 +22,21 @@ user's machine via Docker Desktop:
 
 **Vibe-coded with Claude for personal use, shared because it's too useful
 not to.** Tested seriously (unit suites, real end-to-end runs, CI), but
-built for one setup: Claude Code on Windows 11 + NVIDIA GPU + Docker
-Desktop. Pre-release. **Windows host only** -- this is a deliberate scope
-decision, not an accident. PowerShell 5.1 launcher, Docker Desktop (WSL2
-backend) assumed.
+built primarily for one setup: Claude Code on Windows 11 + NVIDIA GPU +
+Docker Desktop. Pre-release. CPU-only mode and non-Windows hosts
+(PowerShell 7 + Docker, CPU mode) are supported but newer and less tested.
 
 ## Prerequisites
 
-- Claude Code (CLI or desktop app) on the Windows host
-- NVIDIA GPU (any modern card, including Blackwell sm_120)
-- Windows 11 with up-to-date NVIDIA drivers
-- Docker Desktop with WSL2 backend + GPU support enabled
-- ~7 GB free disk for images + ~3 GB for the default whisper model
-- No macOS/Linux, no CPU-only mode, no AMD/Intel GPUs (yet)
+- Claude Code (CLI or desktop app)
+- Windows 11 (primary; PowerShell 5.1 launcher) -- or Linux/macOS with
+  PowerShell 7 (`pwsh`), CPU mode
+- Docker Desktop with WSL2 backend (Windows) or Docker Engine (Linux)
+- NVIDIA GPU **optional**: detected automatically and used for NVDEC decode
+  + CUDA whisper; without one, setup configures CPU-only mode (whisper on
+  int8, `small` model recommended)
+- ~7 GB free disk for images on GPU machines (~2 GB CPU-only) + the whisper
+  model (~3 GB `large-v3`, ~500 MB `small`)
 
 You do NOT need yt-dlp or ffmpeg on the host -- both run inside containers.
 
@@ -55,7 +60,7 @@ First-time setup is slow and the wizard says so upfront: tools image build
 | Command | What it does |
 |---|---|
 | `/watch <url-or-path> [question] [flags]` | The main pipeline: download/read, frames, transcribe, report. |
-| `/watch-setup` | Interactive onboarding: verify Docker + GPU, build images, warm the model, smoke test. |
+| `/watch-setup` | Interactive onboarding: verify Docker, detect GPU (or configure CPU mode), build images, warm the model, smoke test. |
 | `/watch:save-here` | Promote the last (or a named) job's artifacts into `./watch-local-output/<slug>/`. |
 | `/watch:grab-frames` | Pull native-resolution stills of exact moments from an already-watched job. |
 
@@ -91,8 +96,10 @@ watch.ps1:
   4. docker run --rm watch-local/tools:1
        (yt-dlp download, ffprobe metadata, ffmpeg frames + audio.mp3,
         caption provenance classification)  -> intermediate.json
-  5. docker run --rm --gpus all watch-local/whisper:cu128   (ALWAYS, if audio)
-       -> transcript_whisper.json
+       [GPU machines: + --gpus all + W_HWACCEL=cuda -> ffmpeg decodes on NVDEC]
+  5. docker run --rm watch-local/whisper:*   (ALWAYS, if audio)
+       GPU: --gpus all whisper:cu128 (CUDA/float16)
+       CPU: whisper:cpu (int8)      -> transcript_whisper.json
   6. docker run --rm watch-local/tools:1 compare.py         (if creator subs)
        -> comparison.json (similarity metrics + significance)
   7. Pick primary transcript per provenance rules
@@ -115,7 +122,8 @@ watch-local/
 ├── hooks/                        # SessionStart marker check (fast, no docker)
 ├── docker/
 │   ├── Dockerfile.tools          # python:3.11-slim + yt-dlp + ffmpeg
-│   ├── Dockerfile.whisper        # cuda:12.8 + faster-whisper
+│   ├── Dockerfile.whisper        # cuda:12.8 + faster-whisper (GPU machines)
+│   ├── Dockerfile.whisper-cpu    # python:3.11-slim + faster-whisper (CPU machines)
 │   └── docker-compose.yml        # build manifest (builds only)
 ├── scripts/
 │   ├── watch.ps1                 # host orchestrator
@@ -132,7 +140,13 @@ watch-local/
 
 ## Limits (honest)
 
-- **Windows host only.** No macOS/Linux support in this beta.
+- **Windows 11 + NVIDIA GPU is the battle-tested path.** CPU-only mode and
+  Linux/macOS (pwsh, CPU mode) are implemented and unit-tested but have had
+  far less real-world use. GPU mode on Linux needs the NVIDIA Container
+  Toolkit and is untested here.
+- **CPU transcription is slow with big models.** `large-v3` on CPU can
+  approach real-time on long videos; the launcher warns and the wizard
+  recommends `small` on CPU machines.
 - **Best accuracy: videos under 10 minutes** (or use `-Start`/`-End`). The
   report warns when frame coverage goes sparse.
 - **Hard caps: 100 frames, 2 fps.**
@@ -153,10 +167,10 @@ watch-local/
 | Transcription | Groq / OpenAI Whisper API, captions preferred | local faster-whisper ALWAYS + caption comparison |
 | Network for transcript | yes (audio uploaded) | none |
 | Tools install | host (brew / winget) | inside Docker |
-| Host OS | macOS / Linux / Windows | Windows only (beta) |
+| Host OS | macOS / Linux / Windows | Windows (primary); Linux/macOS CPU mode (newer) |
 | API keys | required for Whisper fallback | none |
 | First-run cost | ~10s (brew install) | ~10-20 min (image build + model pull) |
-| Per-call latency | API round trip | local GPU |
+| Per-call latency | API round trip | local GPU (or CPU) |
 | UNC / SMB sources | no | yes (auto-staged) |
 | Native-res screenshots | no | yes (`-Screenshots`, `/watch:grab-frames`) |
 

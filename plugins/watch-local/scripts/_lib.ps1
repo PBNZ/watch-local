@@ -54,38 +54,63 @@ $script:WL_EXIT = [ordered]@{
     PURGE_REFUSED      = 60
 }
 
-# Image tags.
-$script:WL_IMG_TOOLS   = 'watch-local/tools:1'
-$script:WL_IMG_WHISPER = 'watch-local/whisper:cu128'
+# Image tags. The whisper image has a CUDA and a CPU variant; which one a
+# machine builds/runs is decided by GPU detection (config.json `gpu` block).
+$script:WL_IMG_TOOLS       = 'watch-local/tools:1'
+$script:WL_IMG_WHISPER     = 'watch-local/whisper:cu128'
+$script:WL_IMG_WHISPER_CPU = 'watch-local/whisper:cpu'
 
-# Extra `docker run` flags the whisper container needs, replicating the
-# `whisper` service block in docker-compose.yml (GPU access + model cache
-# env). Tools container needs none of these.
-$script:WL_WHISPER_RUN_FLAGS = @(
-    '--gpus', 'all',
-    '-e', 'NVIDIA_VISIBLE_DEVICES=all',
-    '-e', 'HF_HOME=/models/hf-cache'
-)
+# NVIDIA container runtime capability set for the tools container. `video`
+# is what injects libnvcuvid (NVDEC) -- the default 'compute,utility' set
+# does NOT include it, so ffmpeg's cuvid decoders would fail to load.
+$script:WL_GPU_CAPS_ENV = 'NVIDIA_DRIVER_CAPABILITIES=compute,video,utility'
 
 # Hard ceilings -- mirror worker/frames.py.
 $script:WL_MAX_FPS     = 2.0
 $script:WL_MAX_FRAMES_HARD = 100
 
-# Default config values.
+# True on Windows PowerShell 5.1 (Windows-only host) and on pwsh when
+# $IsWindows says so. The -lt 6 check must come first: PS 5.1 has no
+# $IsWindows automatic variable and StrictMode would flag it, but -or
+# short-circuits before the reference is evaluated.
+$script:WL_IS_WINDOWS = ($PSVersionTable.PSVersion.Major -lt 6) -or $IsWindows
+
+# Platform-appropriate default locations. Windows: LOCALAPPDATA + TEMP.
+# Elsewhere: XDG data home (fallback ~/.local/share) + the system temp dir.
+function Get-WLPlatformDirs {
+    param([bool]$IsWindowsPlatform = $script:WL_IS_WINDOWS)
+    if ($IsWindowsPlatform) {
+        return @{
+            Base    = (Join-Path $env:LOCALAPPDATA 'watch-local')
+            Staging = (Join-Path $env:TEMP 'watch-local-stage')
+        }
+    }
+    $dataHome = if ($env:XDG_DATA_HOME) { $env:XDG_DATA_HOME } else { Join-Path (Join-Path $HOME '.local') 'share' }
+    return @{
+        Base    = (Join-Path $dataHome 'watch-local')
+        Staging = (Join-Path ([System.IO.Path]::GetTempPath()) 'watch-local-stage')
+    }
+}
+
+$script:WL_PLATFORM = Get-WLPlatformDirs
+
+# Default config values. `gpu` is $null until detection has run (setup, or
+# watch.ps1's one-time auto-migrate probe).
 $script:WL_DEFAULT_CONFIG = [ordered]@{
-    jobs_root              = (Join-Path $env:LOCALAPPDATA 'watch-local\jobs')
-    models_root            = (Join-Path $env:LOCALAPPDATA 'watch-local\models')
-    staging_root           = (Join-Path $env:TEMP        'watch-local-stage')
+    jobs_root              = (Join-Path $script:WL_PLATFORM.Base 'jobs')
+    models_root            = (Join-Path $script:WL_PLATFORM.Base 'models')
+    staging_root           = $script:WL_PLATFORM.Staging
     default_model          = 'large-v3'
     default_language       = $null
     auto_cleanup_days      = $null
     min_free_gb_jobs       = 2
     min_free_gb_staging    = 1
     min_free_gb_models     = 4
+    gpu                    = $null
 }
 
 # Base dir for config + setup marker.
-$script:WL_BASE_DIR     = Join-Path $env:LOCALAPPDATA 'watch-local'
+$script:WL_BASE_DIR     = $script:WL_PLATFORM.Base
 $script:WL_CONFIG_FILE  = Join-Path $script:WL_BASE_DIR 'config.json'
 $script:WL_SETUP_MARKER = Join-Path $script:WL_BASE_DIR '.setup-complete'
 $script:WL_LAST_JOB     = Join-Path $script:WL_BASE_DIR 'last-job.json'
@@ -360,6 +385,142 @@ function Invoke-WLRun {
 
 #endregion
 
+#region Gpu
+
+# StrictMode-safe property access for hashtables AND deserialized JSON
+# objects (config.gpu is an [ordered] hashtable pre-save but a
+# PSCustomObject after a JSON round-trip).
+function Get-WLObjectProp {
+    param($Obj, [Parameter(Mandatory)][string]$Name)
+    if ($null -eq $Obj) { return $null }
+    if ($Obj -is [System.Collections.IDictionary]) {
+        if ($Obj.Contains($Name)) { return $Obj[$Name] }
+        return $null
+    }
+    if ($Obj.PSObject.Properties.Match($Name).Count -gt 0) { return $Obj.$Name }
+    return $null
+}
+
+# Parse one `nvidia-smi --query-gpu=name,driver_version,memory.total,compute_cap
+# --format=csv,noheader` line into the gpu object persisted in config.json.
+# Empty / unparseable input yields present=false (the CPU-mode marker).
+function ConvertFrom-WLGpuProbe {
+    param(
+        [AllowEmptyString()][AllowNull()][string]$CsvLine,
+        [Parameter(Mandatory)][bool]$Nvdec
+    )
+    $stamp = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    $absent = [pscustomobject]@{
+        present = $false; name = $null; driver = $null; vram_mb = 0
+        compute_cap = $null; nvdec = $false; checked_at = $stamp
+    }
+    if ([string]::IsNullOrWhiteSpace($CsvLine)) { return $absent }
+    $parts = @($CsvLine -split ',' | ForEach-Object { $_.Trim() })
+    if ($parts.Count -lt 4) { return $absent }
+    # Last three fields are driver / memory / compute cap; anything before
+    # them is the (possibly comma-containing) GPU name.
+    $vram = 0
+    [void][int]::TryParse(($parts[$parts.Count - 2] -replace '[^\d]', ''), [ref]$vram)
+    return [pscustomobject]@{
+        present     = $true
+        name        = ($parts[0..($parts.Count - 4)] -join ', ')
+        driver      = $parts[$parts.Count - 3]
+        vram_mb     = $vram
+        compute_cap = $parts[$parts.Count - 1]
+        nvdec       = $Nvdec
+        checked_at  = $stamp
+    }
+}
+
+# Probe the GPU through docker -- the only visibility that matters, since
+# all work runs in containers. Two container runs against the tools image
+# (call only after it is built; a missing image reads as "no GPU"):
+#   1. nvidia-smi (injected by the NVIDIA runtime) -> presence + identity.
+#   2. generate a 1s h264 clip and decode it with the explicit cuvid
+#      decoder -> NVDEC works end-to-end (hard-fails when it doesn't;
+#      verified against libnvcuvid missing / GPU absent).
+# Returns the gpu object; never throws.
+function Test-WLGpu {
+    param([string]$Image = $script:WL_IMG_TOOLS)
+    $orig = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        # Capture ALL lines, then take the first. Piping a native command
+        # into `Select-Object -First 1` stops the pipeline after one object,
+        # which terminates docker mid-stream and leaves $LASTEXITCODE = -1 --
+        # making a working GPU read as absent.
+        $out = @(& docker run --rm --name "watch-local-gpuprobe-$(Get-Random -Maximum 99999)" `
+            --gpus all -e $script:WL_GPU_CAPS_ENV $Image `
+            nvidia-smi --query-gpu=name,driver_version,memory.total,compute_cap --format=csv,noheader 2>$null)
+        if ($LASTEXITCODE -ne 0 -or $out.Count -eq 0) {
+            return (ConvertFrom-WLGpuProbe -CsvLine '' -Nvdec $false)
+        }
+        $csv = [string]$out[0]
+        & docker run --rm --name "watch-local-nvdecprobe-$(Get-Random -Maximum 99999)" `
+            --gpus all -e $script:WL_GPU_CAPS_ENV $Image sh -c `
+            'ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc2=size=320x240:rate=30 -t 1 -c:v libx264 -pix_fmt yuv420p /tmp/probe.mp4 && ffmpeg -hide_banner -loglevel error -y -c:v h264_cuvid -i /tmp/probe.mp4 -f null -' 2>$null | Out-Null
+        $nvdec = ($LASTEXITCODE -eq 0)
+        return (ConvertFrom-WLGpuProbe -CsvLine ([string]$csv) -Nvdec $nvdec)
+    } catch {
+        return (ConvertFrom-WLGpuProbe -CsvLine '' -Nvdec $false)
+    } finally {
+        $ErrorActionPreference = $orig
+    }
+}
+
+# docker run flags for the tools/stills containers. Only when the detected
+# GPU has working NVDEC: GPU access + video capability + the env that makes
+# frames.py insert `-hwaccel cuda`. Otherwise empty (pure CPU decode).
+function Get-WLToolsGpuFlags {
+    param($Gpu)
+    $present = Get-WLObjectProp $Gpu 'present'
+    $nvdec   = Get-WLObjectProp $Gpu 'nvdec'
+    if (-not $present -or -not $nvdec) { return @() }
+    return @('--gpus', 'all', '-e', $script:WL_GPU_CAPS_ENV, '-e', 'W_HWACCEL=cuda')
+}
+
+# Whisper image + docker run flags per mode. CPU mode: no GPU request,
+# ctranslate2 on cpu/int8 (the documented faster-whisper CPU config).
+function Get-WLWhisperImage {
+    param([Parameter(Mandatory)][bool]$GpuPresent)
+    if ($GpuPresent) { return $script:WL_IMG_WHISPER }
+    return $script:WL_IMG_WHISPER_CPU
+}
+
+function Get-WLWhisperRunFlags {
+    param([Parameter(Mandatory)][bool]$GpuPresent)
+    if ($GpuPresent) {
+        return @(
+            '--gpus', 'all',
+            '-e', 'NVIDIA_VISIBLE_DEVICES=all',
+            '-e', 'HF_HOME=/models/hf-cache'
+        )
+    }
+    return @(
+        '-e', 'HF_HOME=/models/hf-cache',
+        '-e', 'W_DEVICE=cpu',
+        '-e', 'W_COMPUTE=int8'
+    )
+}
+
+# Resolve the effective gpu object for a run: use the config block when
+# detection has already run; otherwise (pre-upgrade config) probe once and
+# persist, so older installs migrate on their first /watch.
+function Get-WLGpuInfo {
+    param([Parameter(Mandatory)][hashtable]$Config)
+    $gpu = Get-WLObjectProp $Config 'gpu'
+    if ($null -ne $gpu -and $null -ne (Get-WLObjectProp $gpu 'present')) { return $gpu }
+    Write-Stage 'no GPU detection on record -- probing once (10-30s)...'
+    $gpu = Test-WLGpu
+    $Config.gpu = $gpu
+    try { Save-WLConfig $Config } catch {
+        Write-Detail "could not persist gpu detection: $($_.Exception.Message)"
+    }
+    return $gpu
+}
+
+#endregion
+
 #region Time
 
 # Mirror frames.format_time -- "MM:SS" or "H:MM:SS".
@@ -468,6 +629,13 @@ function Get-PartialSHA256([string]$path, [int]$bytes = 65536) {
 # Read a UTF-8 file regardless of BOM.
 function Read-UTF8 ([string]$path) {
     return [System.IO.File]::ReadAllText($path, [System.Text.UTF8Encoding]::new($false, $false))
+}
+
+# Engine to spawn child PowerShell scripts with: the one running us.
+# Windows PowerShell 5.1 -> powershell.exe; PowerShell 7+ (any OS) -> pwsh.
+function Get-WLPSEngine {
+    if ($PSVersionTable.PSEdition -eq 'Core') { return 'pwsh' }
+    return 'powershell.exe'
 }
 
 #endregion

@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import pytest
 
+import frames as frames_mod
 from frames import (
     parse_time,
     format_time,
     auto_fps,
     auto_fps_focus,
+    hwaccel_args,
     MAX_FPS,
 )
 
@@ -90,6 +92,80 @@ class TestAutoFps:
         # If max_frames is tight, target should respect it.
         _, target = auto_fps(60, max_frames=10)
         assert target <= 10
+
+
+class _FakeResult:
+    returncode = 0
+    stderr = ""
+
+
+class TestHwaccelArgs:
+    def test_empty_when_unset(self, monkeypatch):
+        monkeypatch.delenv("W_HWACCEL", raising=False)
+        assert hwaccel_args() == []
+
+    def test_empty_when_blank(self, monkeypatch):
+        monkeypatch.setenv("W_HWACCEL", "")
+        assert hwaccel_args() == []
+
+    def test_cuda(self, monkeypatch):
+        monkeypatch.setenv("W_HWACCEL", "cuda")
+        assert hwaccel_args() == ["-hwaccel", "cuda"]
+
+
+class TestHwaccelInCommands:
+    """extract() / extract_stills() must place -hwaccel before -i (input option)."""
+
+    @pytest.fixture
+    def captured(self, monkeypatch):
+        calls = []
+
+        def fake_run(cmd, capture_output=True, text=True):
+            calls.append(cmd)
+            return _FakeResult()
+
+        monkeypatch.setattr(frames_mod.subprocess, "run", fake_run)
+        monkeypatch.setattr(frames_mod.shutil, "which", lambda name: f"/usr/bin/{name}")
+        return calls
+
+    def test_extract_inserts_hwaccel(self, captured, monkeypatch, tmp_path):
+        monkeypatch.setenv("W_HWACCEL", "cuda")
+        frames_mod.extract("/vid.mp4", tmp_path, fps=1.0)
+        cmd = captured[0]
+        assert "-hwaccel" in cmd
+        assert cmd[cmd.index("-hwaccel") + 1] == "cuda"
+        assert cmd.index("-hwaccel") < cmd.index("-i")
+
+    def test_extract_no_hwaccel_without_env(self, captured, monkeypatch, tmp_path):
+        monkeypatch.delenv("W_HWACCEL", raising=False)
+        frames_mod.extract("/vid.mp4", tmp_path, fps=1.0)
+        assert "-hwaccel" not in captured[0]
+
+    def test_extract_hwaccel_before_seek(self, captured, monkeypatch, tmp_path):
+        monkeypatch.setenv("W_HWACCEL", "cuda")
+        frames_mod.extract("/vid.mp4", tmp_path, fps=1.0, start_seconds=5.0)
+        cmd = captured[0]
+        assert cmd.index("-hwaccel") < cmd.index("-ss")
+
+    def test_stills_insert_hwaccel(self, captured, monkeypatch, tmp_path):
+        monkeypatch.setenv("W_HWACCEL", "cuda")
+        frames_mod.extract_stills("/vid.mp4", tmp_path, [10.0])
+        cmd = captured[0]
+        assert "-hwaccel" in cmd
+        assert cmd.index("-hwaccel") < cmd.index("-i")
+
+    def test_stills_no_hwaccel_without_env(self, captured, monkeypatch, tmp_path):
+        monkeypatch.delenv("W_HWACCEL", raising=False)
+        frames_mod.extract_stills("/vid.mp4", tmp_path, [10.0])
+        assert "-hwaccel" not in captured[0]
+
+    def test_audio_extraction_never_uses_hwaccel(self, captured, monkeypatch, tmp_path):
+        monkeypatch.setenv("W_HWACCEL", "cuda")
+        with pytest.raises(SystemExit):
+            # No audio file is produced by the fake runner -> SystemExit is
+            # expected; we only care about the command it attempted.
+            frames_mod.extract_audio_for_whisper("/vid.mp4", tmp_path / "audio.mp3")
+        assert "-hwaccel" not in captured[0]
 
 
 class TestAutoFpsFocus:

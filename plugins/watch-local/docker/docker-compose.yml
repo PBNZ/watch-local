@@ -39,3 +39,16 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - HF_HOME=/models/hf-cache
     restart: "no"
+
+  # CPU-only whisper variant. Built INSTEAD of `whisper` when GPU detection
+  # finds no usable NVIDIA GPU (setup.ps1 picks the service). The launcher
+  # passes W_DEVICE=cpu / W_COMPUTE=int8 at run time.
+  whisper-cpu:
+    build:
+      context: .
+      dockerfile: Dockerfile.whisper-cpu
+    image: watch-local/whisper:cpu
+    container_name: watch-local-whisper-cpu
+    environment:
+      - HF_HOME=/models/hf-cache
+    restart: "no"

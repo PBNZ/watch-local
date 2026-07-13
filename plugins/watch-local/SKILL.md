@@ -1,20 +1,31 @@
 ---
 name: watch-local
-description: Watch a video (URL, local path, or SMB/UNC share) using local NVIDIA GPU. Downloads with yt-dlp, extracts auto-scaled frames with ffmpeg, ALWAYS transcribes with faster-whisper locally and compares against creator-provided captions when present. All workers run in Docker containers on demand. No cloud API keys.
+description: Watch a video (URL, local path, or SMB/UNC share) fully locally. Downloads with yt-dlp, extracts auto-scaled frames with ffmpeg, ALWAYS transcribes with faster-whisper locally and compares against creator-provided captions when present. Auto-detects an NVIDIA GPU (NVDEC decode + CUDA whisper) and falls back to CPU-only mode without one. All workers run in Docker containers on demand. No cloud API keys.
 argument-hint: "<video-url-or-path> [question] [flags]"
 allowed-tools: Bash, Read, AskUserQuestion
 license: MIT
 user-invocable: true
 ---
 
-# /watch-local -- Claude watches a video using your local GPU
+# /watch-local -- Claude watches a video using local compute
 
 You don't have a video input; this skill gives you one. A PowerShell launcher
-runs Docker containers on demand (CPU `tools`, GPU `whisper`), extracts
-frames, ALWAYS transcribes with faster-whisper on the local GPU, optionally
-compares against creator-uploaded captions, then prints frame paths +
-transcript. You then `Read` each frame path to see the images and combine
-them with the transcript to answer the user.
+runs Docker containers on demand (`tools` + `whisper`), extracts frames,
+ALWAYS transcribes with faster-whisper locally, optionally compares against
+creator-uploaded captions, then prints frame paths + transcript. You then
+`Read` each frame path to see the images and combine them with the
+transcript to answer the user.
+
+**Compute modes (auto-detected at setup, cached in config):** with a usable
+NVIDIA GPU, video decode runs on NVDEC and whisper on CUDA. Without one,
+everything runs CPU-only (whisper on int8) -- slower but fully functional.
+The report's **Compute** line states which mode a run used. After
+driver/hardware changes, re-detect with `setup.ps1 -DetectGpu`.
+
+**Invocation note:** examples below use `powershell.exe` (Windows). On
+Linux/macOS hosts, replace `powershell.exe -ExecutionPolicy Bypass` with
+`pwsh` -- the scripts run on PowerShell 7 on any OS (CPU mode; GPU mode
+needs the NVIDIA Container Toolkit).
 
 ## Step 0 -- Setup preflight (silent on success)
 
@@ -68,7 +79,7 @@ Optional flags (PowerShell named params -- pass as `-Name Value`):
 | `-Screenshots "MM:SS,MM:SS"` | After the run, save native-resolution stills of these exact moments into `screenshots/`. |
 | `-StillResolution W` | Width for `-Screenshots` stills. Default 0 = native source resolution. |
 | `-Fps F` | Override auto-fps (clamped at 2 fps). |
-| `-Model name` | `large-v3` (default), `medium`, `small`, `base`, `tiny`. |
+| `-Model name` | `large-v3` (default), `medium`, `small`, `base`, `tiny`. On CPU-only machines prefer `small`/`medium` -- `large-v3` on CPU can approach real-time on long videos (the launcher warns). |
 | `-Language en` | Force language; default auto-detect. |
 | `-OutDir D` | Per-call override of job-dir location. Exclusive with `-SaveHere`. |
 | `-SaveHere` | Promote artifacts into `./watch-local-output/<slug>/` after the run. Exclusive with `-OutDir`. |
@@ -151,7 +162,10 @@ indefinitely. They are NOT cleaned up automatically. User can:
 
 - **Setup preflight failed** -> suggest `/watch-setup`.
 - **Docker daemon down** -> "Start Docker Desktop."
-- **GPU not visible** -> driver/WSL2 fix; rerun `/watch-setup`.
+- **GPU not visible** -> NOT an error: the run proceeds in CPU-only mode
+  and says so on its **Compute** line. If the user says the machine has an
+  NVIDIA GPU, suggest a driver/WSL2 (or NVIDIA Container Toolkit) fix, then
+  `setup.ps1 -DetectGpu` to re-probe.
 - **Insufficient disk space (exit 50)** -> show the exact "free vs
   needed" numbers from stderr; suggest `setup.ps1 -SetJobsRoot D:\...`
   or `setup.ps1 -PurgeJobs -OlderThanDays N`.
@@ -181,9 +195,11 @@ session, do NOT re-run the launcher.
 ## Security & permissions
 
 What this skill does:
-- Runs `yt-dlp` in a CPU container to download.
-- Runs `ffmpeg` in a CPU container to extract frames + mono 16 kHz mp3.
-- Runs `faster-whisper` in a GPU container -- ON YOUR LOCAL GPU.
+- Runs `yt-dlp` in the tools container to download.
+- Runs `ffmpeg` in the tools container to extract frames + mono 16 kHz mp3
+  (decode on NVDEC when a GPU was detected, otherwise CPU).
+- Runs `faster-whisper` in a local container -- on your GPU when detected,
+  on your CPU otherwise. Never in the cloud.
 - Writes artifacts to `%LOCALAPPDATA%\watch-local\jobs\<slug>\`.
 - Caches the whisper model under `%LOCALAPPDATA%\watch-local\models\`.
 - UNC sources are staged to `%TEMP%\watch-local-stage\<slug>\` then
@@ -213,8 +229,9 @@ What this skill does NOT do:
 - `scripts/worker/formats.py` -- shared yt-dlp format selector (download + probe)
 - `scripts/worker/captions.py` -- VTT parsing + smarter dedupe
 - `scripts/worker/disk.py` -- yt-dlp dry-run size probe
-- `docker/Dockerfile.tools` -- yt-dlp + ffmpeg image (CPU)
-- `docker/Dockerfile.whisper` -- CUDA 12.8 + faster-whisper image (GPU)
+- `docker/Dockerfile.tools` -- yt-dlp + ffmpeg image (ffmpeg's cuvid/NVDEC decoders activate when run with GPU access)
+- `docker/Dockerfile.whisper` -- CUDA 12.8 + faster-whisper image (GPU machines)
+- `docker/Dockerfile.whisper-cpu` -- slim faster-whisper image (CPU-only machines)
 - `docker/docker-compose.yml` -- service definitions
 
 Review scripts before first use to verify behavior.

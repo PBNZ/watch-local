@@ -64,44 +64,67 @@ function _PromptYN([string]$prompt, [bool]$default) {
     if ([string]::IsNullOrWhiteSpace($reply)) { return $default }
     return ($reply.Trim().ToLower() -in @('y','yes'))
 }
+
+# Spawn a child script with the same engine that runs us (powershell.exe /
+# pwsh), with EAP lowered so native stderr doesn't terminate the wizard.
+function _RunChild([string]$scriptPath, [string[]]$childArgs) {
+    $engine = Get-WLPSEngine
+    $flags = @('-NoProfile')
+    if ($script:WL_IS_WINDOWS) { $flags += @('-ExecutionPolicy', 'Bypass') }
+    $_eapOrig = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+        & $engine @flags -File $scriptPath @childArgs
+        return $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $_eapOrig
+    }
+}
 #endregion
 
 Write-Output ''
 Write-Output '# /watch-setup -- watch-local onboarding'
 Write-Output ''
-Write-Output 'This walks you through first-time setup of watch-local. Three GPU-heavy'
-Write-Output 'steps are involved (build whisper image, download model, smoke test).'
+Write-Output 'This walks you through first-time setup of watch-local. The slow steps'
+Write-Output 'are the whisper image build and the model download; both run once.'
 Write-Output ''
 
 #region Step1_Docker
-Write-Output '## Step 1: Docker + GPU'
+Write-Output '## Step 1: Docker + GPU detection'
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
-    Write-Err 'docker CLI not on PATH. Install Docker Desktop: https://www.docker.com/products/docker-desktop/'
+    Write-Err 'docker CLI not on PATH. Install Docker (Desktop on Windows/macOS, Engine on Linux): https://docs.docker.com/get-docker/'
     exit $script:WL_EXIT.DOCKER_MISSING
 }
 & docker info 2>$null | Out-Null
 if ($LASTEXITCODE -ne 0) {
-    Write-Err 'Docker Desktop daemon not responding. Start Docker Desktop and re-run /watch-setup.'
+    Write-Err 'Docker daemon not responding. Start Docker (Desktop) and re-run /watch-setup.'
     exit $script:WL_EXIT.DOCKER_DOWN
 }
 Write-Output 'Docker CLI + daemon -- OK'
 
-Write-Output 'Probing GPU exposure to Docker (10-20s)...'
-& docker run --rm --name "watch-local-gpucheck-$(Get-Random -Maximum 99999)" --gpus all nvidia/cuda:12.8.0-base-ubuntu22.04 nvidia-smi -L 2>$null | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    Write-Err 'Docker cannot see your NVIDIA GPU. Steps to fix:'
-    Write-Err '  1. Install the latest NVIDIA Game Ready / Studio driver.'
-    Write-Err '  2. In Docker Desktop -> Settings -> General, enable WSL2 backend.'
-    Write-Err '  3. Restart Docker Desktop, then re-run /watch-setup.'
-    exit $script:WL_EXIT.GPU_MISSING
+Write-Output 'Detecting NVIDIA GPU (builds the small tools image first if needed)...'
+$code = _RunChild $setupScript @('-DetectGpu')
+if ($code -ne 0) {
+    Write-Err "GPU detection failed (exit $code) -- fix docker and re-run /watch-setup."
+    exit $code
 }
-Write-Output 'NVIDIA GPU visible to Docker -- OK'
+$cfg = Get-WLConfig
+$gpu = Get-WLObjectProp $cfg 'gpu'
+$gpuPresent = [bool](Get-WLObjectProp $gpu 'present')
+if ($gpuPresent) {
+    $nvdecTxt = if (Get-WLObjectProp $gpu 'nvdec') { 'NVDEC video decode available' } else { 'no NVDEC (CPU decode)' }
+    Write-Output ("GPU mode: {0} ({1} MB VRAM, {2})" -f (Get-WLObjectProp $gpu 'name'), (Get-WLObjectProp $gpu 'vram_mb'), $nvdecTxt)
+} else {
+    Write-Output 'CPU-only mode: no NVIDIA GPU visible to Docker.'
+    Write-Output 'Everything still works -- transcription runs on CPU (int8), just slower.'
+    Write-Output 'If this machine DOES have an NVIDIA GPU: install the latest driver, enable the'
+    Write-Output 'WSL2 backend in Docker Desktop (Windows) or the NVIDIA Container Toolkit (Linux),'
+    Write-Output "then re-run /watch-setup (or: setup.ps1 -DetectGpu)."
+}
 Write-Output ''
 #endregion
 
 #region Step2_Config
 Write-Output '## Step 2: Storage locations'
-$cfg = Get-WLConfig
 $jobs    = if ($JobsRoot)    { $JobsRoot }    else { _Prompt 'jobs_root (per-job artifacts)'        ([string]$cfg.jobs_root) }
 $models  = if ($ModelsRoot)  { $ModelsRoot }  else { _Prompt 'models_root (whisper model cache)'    ([string]$cfg.models_root) }
 $staging = if ($StagingRoot) { $StagingRoot } else { _Prompt 'staging_root (UNC stage temp)'        ([string]$cfg.staging_root) }
@@ -124,12 +147,19 @@ Write-Output ''
 #region Step3_Model
 Write-Output '## Step 3: Whisper model'
 Write-Output 'Models in order of quality (and size):'
-Write-Output '  large-v3  ~3.0 GB     best quality (recommended)'
-Write-Output '  medium    ~1.5 GB     good quality, faster'
-Write-Output '  small     ~500 MB     decent for English-heavy content'
+if ($gpuPresent) {
+    Write-Output '  large-v3  ~3.0 GB     best quality (recommended on GPU)'
+    Write-Output '  medium    ~1.5 GB     good quality, faster'
+    Write-Output '  small     ~500 MB     decent for English-heavy content'
+} else {
+    Write-Output '  large-v3  ~3.0 GB     best quality -- SLOW on CPU (can approach real-time)'
+    Write-Output '  medium    ~1.5 GB     good quality, still heavy on CPU'
+    Write-Output '  small     ~500 MB     recommended on CPU -- good speed/quality balance'
+}
 Write-Output '  base      ~150 MB     fast smoke testing'
 Write-Output '  tiny      ~75 MB      smoke testing only'
-$pickedModel = if ($Model) { $Model } else { _Prompt 'Which model?' 'large-v3' }
+$recommended = if ($gpuPresent) { 'large-v3' } else { 'small' }
+$pickedModel = if ($Model) { $Model } else { _Prompt 'Which model?' $recommended }
 $cfg.default_model = $pickedModel
 Save-WLConfig $cfg
 Write-Output "default_model = $pickedModel"
@@ -138,19 +168,14 @@ Write-Output ''
 
 #region Step4_Build
 Write-Output '## Step 4: Build images + warm model cache'
-Write-Output 'First build is the slow part (whisper image ~5-15 min, model ~3 GB pull).'
+$buildNote = if ($gpuPresent) { 'whisper CUDA image ~5-15 min' } else { 'whisper CPU image ~2-5 min' }
+Write-Output "First build is the slow part ($buildNote, then the model pull)."
 $go = _PromptYN 'Proceed?' $true
 if (-not $go) {
     Write-Err 'cancelled.'
     exit 0
 }
-$_eapOrig = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-try {
-    & powershell.exe -ExecutionPolicy Bypass -File $setupScript -Model $pickedModel
-    $setupCode = $LASTEXITCODE
-} finally {
-    $ErrorActionPreference = $_eapOrig
-}
+$setupCode = _RunChild $setupScript @('-Model', $pickedModel)
 if ($setupCode -ne 0) {
     Write-Err "setup.ps1 failed (exit $setupCode) -- fix and re-run /watch-setup."
     exit $setupCode
@@ -165,13 +190,7 @@ if (-not $SkipSmoke -and -not $Yes) {
         Write-Output '## Step 5: Smoke test'
         # Short, captions-bearing, very low-risk URL. Brad's own /watch demo.
         $smokeUrl = 'https://www.youtube.com/watch?v=QZMljuD10sU'
-        $_eapOrig = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-        try {
-            & powershell.exe -ExecutionPolicy Bypass -File $watchScript -Source $smokeUrl -MaxFrames 4 -NoCompare
-            $smokeCode = $LASTEXITCODE
-        } finally {
-            $ErrorActionPreference = $_eapOrig
-        }
+        $smokeCode = _RunChild $watchScript @('-Source', $smokeUrl, '-MaxFrames', '4', '-NoCompare')
         if ($smokeCode -ne 0) {
             Write-Warn "smoke test exited $smokeCode -- inspect output above."
         } else {
@@ -190,14 +209,16 @@ Write-Output 'Usage:'
 Write-Output '  /watch <url-or-path> [question]'
 Write-Output '  /watch:save-here                     # promote last job to CWD'
 Write-Output ''
+$psEngine = Get-WLPSEngine
 Write-Output 'Inspect or change settings:'
-Write-Output "  powershell -File `"$setupScript`" -ShowConfig"
-Write-Output "  powershell -File `"$setupScript`" -SetDefaultModel medium"
-Write-Output "  powershell -File `"$setupScript`" -ListJobs"
+Write-Output "  $psEngine -File `"$setupScript`" -ShowConfig"
+Write-Output "  $psEngine -File `"$setupScript`" -SetDefaultModel medium"
+Write-Output "  $psEngine -File `"$setupScript`" -ListJobs"
+Write-Output "  $psEngine -File `"$setupScript`" -DetectGpu        # re-probe after driver/hardware changes"
 Write-Output ''
 Write-Output 'Disk-space pre-flight runs on every /watch call. Cleanup is opt-in:'
 Write-Output "  /watch ... -Cleanup                              # delete this job's dir when done"
-Write-Output "  powershell -File `"$setupScript`" -PurgeJobs -OlderThanDays 30"
+Write-Output "  $psEngine -File `"$setupScript`" -PurgeJobs -OlderThanDays 30"
 Write-Output ''
 #endregion
 exit 0

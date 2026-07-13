@@ -80,7 +80,7 @@ $minFreeModels  = [double]$config.min_free_gb_models
 $pluginRoot  = Split-Path -Parent $PSScriptRoot
 $dockerDir   = Join-Path $pluginRoot 'docker'
 $composeFile = Join-Path $dockerDir 'docker-compose.yml'
-$workerDir   = $PSScriptRoot + '\worker'
+$workerDir   = Join-Path $PSScriptRoot 'worker'
 
 foreach ($p in @($jobsRoot, $modelsDir, $stagingRoot)) {
     if (-not (Test-Path -LiteralPath $p)) {
@@ -252,6 +252,19 @@ if (-not $modelHasFiles) {
 
 if (-not $DryRun) { Assert-DockerReady }
 
+# GPU mode for this run: detection result from config (setup wrote it), or
+# a one-time probe-and-persist for pre-upgrade configs. DryRun never talks
+# to docker, so it falls back to whatever the config already holds.
+$gpuInfo = if ($DryRun) { Get-WLObjectProp $config 'gpu' } else { Get-WLGpuInfo -Config $config }
+$gpuPresent  = [bool](Get-WLObjectProp $gpuInfo 'present')
+$toolsGpuFlags = Get-WLToolsGpuFlags -Gpu $gpuInfo
+if ($gpuPresent) {
+    $decodeLabel = if ($toolsGpuFlags.Count -gt 0) { 'NVDEC decode + CUDA whisper' } else { 'CUDA whisper (no NVDEC)' }
+    Write-Stage ("compute: GPU -- {0} ({1})" -f (Get-WLObjectProp $gpuInfo 'name'), $decodeLabel)
+} else {
+    Write-Stage 'compute: CPU-only (no NVIDIA GPU detected -- run setup.ps1 -DetectGpu after driver changes)'
+}
+
 $envArgs = @(
     '-e', "W_SOURCE=$containerSource",
     '-e', ("W_IS_URL=" + $(if ($isUrl) { '1' } else { '0' })),
@@ -271,7 +284,7 @@ if ($inputMountHost) {
     $mountArgs += @('-v', "$(ConvertTo-DockerPath $inputMountHost):${inputMountContainer}:ro")
 }
 
-$toolsRunArgs = $envArgs + $mountArgs + @($script:WL_IMG_TOOLS, 'python3', '/app/tools_run.py')
+$toolsRunArgs = $toolsGpuFlags + $envArgs + $mountArgs + @($script:WL_IMG_TOOLS, 'python3', '/app/tools_run.py')
 
 Write-Stage "running tools container..."
 if ($DryRun) {
@@ -307,7 +320,11 @@ if ($DryRun) {
     $skipWhisperReason = 'no audio track in source'
     Write-Warn "skipping whisper -- $skipWhisperReason"
 } else {
-    Write-Stage "running whisper container on GPU (model: $Model)..."
+    $deviceLabel = if ($gpuPresent) { 'GPU' } else { 'CPU' }
+    Write-Stage "running whisper container on $deviceLabel (model: $Model)..."
+    if (-not $gpuPresent -and $Model -eq 'large-v3') {
+        Write-Warn 'large-v3 on CPU is slow (can approach real-time on long videos). Consider -Model small or medium.'
+    }
     $whisperEnv = @('-e', "W_MODEL=$Model")
     if ($Language) { $whisperEnv += @('-e', "W_LANGUAGE=$Language") }
     $whisperMounts = @(
@@ -315,7 +332,7 @@ if ($DryRun) {
         '-v', "$(ConvertTo-DockerPath $modelsDir):/models",
         '-v', "$(ConvertTo-DockerPath $workerDir):/app:ro"
     )
-    $whisperRunArgs = $script:WL_WHISPER_RUN_FLAGS + $whisperEnv + $whisperMounts + @($script:WL_IMG_WHISPER, 'python3', '/app/whisper_run.py')
+    $whisperRunArgs = (Get-WLWhisperRunFlags -GpuPresent $gpuPresent) + $whisperEnv + $whisperMounts + @((Get-WLWhisperImage -GpuPresent $gpuPresent), 'python3', '/app/whisper_run.py')
     $code = Invoke-WLRun $whisperRunArgs -Name 'whisper'
     if ($code -eq 0) {
         $whisperTranscript = Read-UTF8 (Join-Path $workDir 'transcript_whisper.json') | ConvertFrom-Json
@@ -511,7 +528,13 @@ Write-Output ("- **Frames:** {0} @ {1:N3} fps, {2} mode (budget {3}, max {4})" -
 Write-Output "- **Frame size:** $($intermediate.resolution)px wide"
 $provLabel = if ($intermediate.subtitle_source) { [string]$intermediate.subtitle_source } else { 'none on source' }
 Write-Output "- **Caption provenance:** $provLabel"
-$whisperLine = if ($whisperOk) { "ran ($Model)" } else { "skipped/failed -- $skipWhisperReason" }
+$computeLine = if ($gpuPresent) {
+    $dec = if ($toolsGpuFlags.Count -gt 0) { 'NVDEC' } else { 'CPU decode' }
+    "GPU -- $(Get-WLObjectProp $gpuInfo 'name') ($dec, CUDA whisper)"
+} else { 'CPU-only' }
+Write-Output "- **Compute:** $computeLine"
+$whisperDevice = if ($gpuPresent) { 'GPU' } else { 'CPU' }
+$whisperLine = if ($whisperOk) { "ran ($Model on $whisperDevice)" } else { "skipped/failed -- $skipWhisperReason" }
 Write-Output "- **Whisper:** $whisperLine"
 if ($comparison -and $comparison.metrics) {
     Write-Output ("- **Comparison:** {0} (length_ratio {1}, word_jaccard {2}, 3gram_jaccard {3})" -f `
@@ -664,7 +687,7 @@ if (-not $DryRun -and $Screenshots) {
             '-e', 'W_OUT_DIR=/work/screenshots',
             '-e', "W_STILL_RES=$StillResolution"
         )
-        $code = Invoke-WLRun ($shotEnv + $shotMounts + @($script:WL_IMG_TOOLS, 'python3', '/app/stills.py')) -Name 'screenshots'
+        $code = Invoke-WLRun ($toolsGpuFlags + $shotEnv + $shotMounts + @($script:WL_IMG_TOOLS, 'python3', '/app/stills.py')) -Name 'screenshots'
         $shotsDir = Join-Path $workDir 'screenshots'
         if ($code -eq 0 -and (Test-Path -LiteralPath $shotsDir)) {
             $shotFiles = @(Get-ChildItem -LiteralPath $shotsDir -File -ErrorAction SilentlyContinue |

@@ -46,7 +46,7 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\_lib.ps1"
 if ($VerboseLog) { Enable-VerboseLog }
 
-$workerDir = $PSScriptRoot + '\worker'
+$workerDir = Join-Path $PSScriptRoot 'worker'
 $config    = Get-WLConfig
 $jobsRoot  = [string]$config.jobs_root
 #endregion
@@ -131,13 +131,17 @@ if ($video) {
 #region Extract
 Assert-DockerReady
 
+# NVDEC decode when the detected GPU supports it (same flags as /watch).
+$gpuInfo = Get-WLGpuInfo -Config $config
+$toolsGpuFlags = Get-WLToolsGpuFlags -Gpu $gpuInfo
+
 $shotsDir = Join-Path $jobDir 'screenshots'
 New-Item -ItemType Directory -Force -Path $shotsDir | Out-Null
 
 $resLabel = if ($Resolution -gt 0) { "$Resolution px wide" } else { 'native resolution' }
 Write-Stage "extracting stills at $resLabel for: $Screenshots"
 
-$runArgs = @(
+$runArgs = $toolsGpuFlags + @(
     '-e', "W_VIDEO=$containerVideo",
     '-e', "W_SHOTS=$Screenshots",
     '-e', 'W_OUT_DIR=/work/screenshots',

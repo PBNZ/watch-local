@@ -3,22 +3,27 @@
 ## Components
 
 ```
-host: Windows + PowerShell + Claude Code
+host: Windows (powershell.exe) or Linux/macOS (pwsh) + Claude Code
               |
               v
    /watch <args>  (slash command)
               |
               v
-   powershell.exe -File watch.ps1 -Source ...
+   powershell.exe|pwsh -File watch.ps1 -Source ...
               |
               v
   +---- watch.ps1 orchestrator -----------------------------+
-  |   1. resolve config (config.json) + flag overrides     |
+  |   1. resolve config (config.json) + flag overrides      |
   |   2. resolve source (URL / local / UNC -> stage)        |
   |   3. disk-space pre-flight                              |
-  |   4. spawn 'tools' container  (CPU)                     |
+  |   3b. resolve GPU mode (config `gpu` block; one-time    |
+  |       probe-and-persist for pre-upgrade configs)        |
+  |   4. spawn 'tools' container                            |
+  |        GPU+NVDEC: --gpus all + W_HWACCEL=cuda           |
   |        -> intermediate.json + frames/* + audio.mp3      |
-  |   5. spawn 'whisper' container (GPU, ALWAYS runs)       |
+  |   5. spawn whisper container (ALWAYS runs)              |
+  |        GPU: whisper:cu128 --gpus all (cuda/float16)     |
+  |        CPU: whisper:cpu (cpu/int8)                      |
   |        -> transcript_whisper.json                       |
   |   6. spawn 'tools' container again for compare.py       |
   |        -> comparison.json                               |
@@ -29,14 +34,41 @@ host: Windows + PowerShell + Claude Code
   +---------------------------------------------------------+
 ```
 
+## GPU detection
+
+All work happens in containers, so the only GPU visibility that matters is
+docker's. `Test-WLGpu` (in `_lib.ps1`) probes through the tools image:
+
+1. `docker run --gpus all -e NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+   ... nvidia-smi --query-gpu=name,driver_version,memory.total,compute_cap`
+   -- the NVIDIA runtime injects `nvidia-smi` into any image, so no CUDA
+   base is needed. Success -> GPU present + identity.
+2. A 1-second h264 clip is generated in-container and decoded with the
+   explicit `h264_cuvid` decoder -- a hard end-to-end NVDEC test (the
+   `video` capability is what injects `libnvcuvid`; the default capability
+   set does not include it).
+
+The result (`present`, `name`, `driver`, `vram_mb`, `compute_cap`, `nvdec`,
+`checked_at`) is persisted as the `gpu` block in config.json by setup, and
+re-probed on demand with `setup.ps1 -DetectGpu`. Configs from older
+versions migrate on their first `/watch` (probe once, persist). No GPU is
+never fatal: it selects CPU-only mode.
+
+NVDEC decode is decode-only offload: decoded frames return to system
+memory and the existing `fps=...,scale=...` filter chain runs unchanged on
+CPU. When hwaccel init fails at runtime despite detection (driver hiccup),
+ffmpeg logs a warning and falls back to software decode on its own.
+
 ## Containers
 
-Two Docker images, both built locally on first `/watch-setup`:
+Docker images, built locally on first `/watch-setup` (the whisper variant
+matching the detected mode is built; the other is not):
 
 | Image | Base | Size | Purpose |
 |---|---|---|---|
-| `watch-local/tools:1` | `python:3.11-slim` | ~900 MB | yt-dlp + ffmpeg + Python workers. CPU-only. |
-| `watch-local/whisper:cu128` | `nvidia/cuda:12.8.0-cudnn-runtime-ubuntu22.04` | ~9 GB | faster-whisper. GPU. |
+| `watch-local/tools:1` | `python:3.11-slim` | ~900 MB | yt-dlp + ffmpeg + Python workers. ffmpeg's cuvid/NVDEC decoders activate when run with `--gpus`. |
+| `watch-local/whisper:cu128` | `nvidia/cuda:12.8.0-cudnn-runtime-ubuntu22.04` | ~9 GB | faster-whisper, CUDA/float16. GPU machines. |
+| `watch-local/whisper:cpu` | `python:3.11-slim` | ~1 GB | faster-whisper, cpu/int8. CPU-only machines. |
 
 Per-call workers run via plain `docker run --rm` (`Invoke-WLRun`) -- they
 exist only for the lifetime of the call; nothing is `up -d`. Image builds
@@ -68,13 +100,16 @@ v0.2.0 blocker -- see CHANGELOG 0.2.2).
 ```
 
 All three roots are configurable via `setup.ps1 -SetJobsRoot / -SetModelsRoot / -SetStagingRoot`.
+On Linux/macOS the defaults are `$XDG_DATA_HOME/watch-local` (fallback
+`~/.local/share/watch-local`) and `<system-temp>/watch-local-stage`.
 
 State deliberately lives OUTSIDE the plugin install dir: `${CLAUDE_PLUGIN_ROOT}`
 is replaced on every plugin update, so anything persistent stored there (model
 caches, jobs, config) would silently vanish. `%LOCALAPPDATA%\watch-local\` is
-Windows' conventional per-user app-data location, survives plugin updates and
-reinstalls, and keeps multi-GB artifacts out of `~/.claude`. The scripts never
-write runtime state into the plugin directory.
+Windows' conventional per-user app-data location (XDG data home is the
+equivalent elsewhere), survives plugin updates and reinstalls, and keeps
+multi-GB artifacts out of `~/.claude`. The scripts never write runtime state
+into the plugin directory.
 
 The plugin's SessionStart hook is a single `Test-Path` on the setup marker
 (fast by design -- SessionStart fires on every startup/resume/clear/compact).
@@ -126,7 +161,7 @@ Documented in `scripts/_lib.ps1`:
 | 0 | success |
 | 10 | docker CLI missing |
 | 11 | docker daemon down |
-| 12 | GPU not visible to docker |
+| 12 | retired (0.4.0): GPU absence now selects CPU mode instead of failing |
 | 20 | source not found / unreachable |
 | 21 | UNC stage copy failed |
 | 22 | incompatible flags (-OutDir + -SaveHere etc.) |

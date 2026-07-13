@@ -7,7 +7,8 @@
     Modes (mutually exclusive top-level switches):
         -Check                    silent preflight, non-zero exit on miss
         -Json                     machine-readable status snapshot
-        -Install (default)        build images + warm whisper model
+        -DetectGpu                (re-)probe NVIDIA GPU + NVDEC, persist to config
+        -Install (default)        detect GPU, build images + warm whisper model
         -ShowConfig               print config.json
         -SetJobsRoot <path>       relocate jobs_root
         -SetModelsRoot <path>     relocate models_root (use -MoveModels)
@@ -34,6 +35,8 @@ param(
     [switch]$Check,
     [Parameter(ParameterSetName='Json')]
     [switch]$Json,
+    [Parameter(ParameterSetName='DetectGpu')]
+    [switch]$DetectGpu,
     [Parameter(ParameterSetName='Install')]
     [switch]$Force,
     [Parameter(ParameterSetName='Install')]
@@ -102,7 +105,7 @@ $ErrorActionPreference = 'Stop'
 $pluginRoot  = Split-Path -Parent $PSScriptRoot
 $dockerDir   = Join-Path $pluginRoot 'docker'
 $composeFile = Join-Path $dockerDir 'docker-compose.yml'
-$workerDir   = $PSScriptRoot + '\worker'
+$workerDir   = Join-Path $PSScriptRoot 'worker'
 
 function _EnsureConfig {
     $cfg = Get-WLConfig
@@ -145,13 +148,24 @@ function _DockerDaemon {
 }
 
 function _Status {
+    $cfg = Get-WLConfig
+    # Which whisper image counts as "present" depends on the detected mode.
+    # Pre-upgrade configs have no gpu block yet: accept either variant so
+    # existing installs don't get pushed through setup again (their first
+    # /watch runs the one-time detection).
+    $gpu = Get-WLObjectProp $cfg 'gpu'
+    $whisperOk = if ($null -eq $gpu) {
+        (_TestImage $script:WL_IMG_WHISPER) -or (_TestImage $script:WL_IMG_WHISPER_CPU)
+    } else {
+        _TestImage (Get-WLWhisperImage -GpuPresent ([bool](Get-WLObjectProp $gpu 'present')))
+    }
     return [ordered]@{
         docker_cli     = _DockerCli
         docker_running = $(if (_DockerCli) { _DockerDaemon } else { $false })
         tools_image    = _TestImage $script:WL_IMG_TOOLS
-        whisper_image  = _TestImage $script:WL_IMG_WHISPER
+        whisper_image  = $whisperOk
         marker         = (Test-Path -LiteralPath $script:WL_SETUP_MARKER)
-        config         = Get-WLConfig
+        config         = $cfg
     }
 }
 #endregion
@@ -179,14 +193,39 @@ function _Json {
 #endregion
 
 #region Install
-function _GpuOk {
-    Write-Stage 'checking GPU exposure to docker (10-20s)...'
-    try {
-        & docker run --rm --name "watch-local-gpucheck-$(Get-Random -Maximum 99999)" --gpus all nvidia/cuda:12.8.0-base-ubuntu22.04 nvidia-smi -L 2>$null | Out-Null
-        return ($LASTEXITCODE -eq 0)
-    } catch {
-        return $false
+function _AssertDockerForSetup {
+    if (-not (_DockerCli)) {
+        Write-Err 'docker CLI not found on PATH. Install Docker (Desktop on Windows/macOS, Engine on Linux): https://docs.docker.com/get-docker/'
+        exit $script:WL_EXIT.DOCKER_MISSING
     }
+    if (-not (_DockerDaemon)) {
+        Write-Err 'Docker daemon not responding. Start Docker (Desktop) and re-run.'
+        exit $script:WL_EXIT.DOCKER_DOWN
+    }
+}
+
+function _BuildToolsImage {
+    Write-Stage 'building tools image (CPU, small)...'
+    $code = Invoke-WLCompose $composeFile 'build' 'tools'
+    if ($code -ne 0) { Write-Err 'docker compose build tools failed'; exit $script:WL_EXIT.TOOLS_FAILED }
+}
+
+# Probe the GPU (through the tools image), persist the result in
+# config.json, and narrate what was found. Returns the gpu object.
+function _DetectAndSaveGpu([hashtable]$cfg) {
+    Write-Stage 'detecting NVIDIA GPU through docker (10-30s)...'
+    $gpu = Test-WLGpu
+    $cfg.gpu = $gpu
+    Save-WLConfig $cfg
+    if ($gpu.present) {
+        $nvdecLabel = if ($gpu.nvdec) { 'NVDEC video decode: OK' } else { 'NVDEC video decode: unavailable (CPU decode)' }
+        Write-Stage ("GPU: {0} -- {1} MB VRAM, driver {2}, compute {3}. {4}" -f `
+            $gpu.name, $gpu.vram_mb, $gpu.driver, $gpu.compute_cap, $nvdecLabel)
+    } else {
+        Write-Warn 'no NVIDIA GPU visible to Docker -- configuring CPU-only mode.'
+        Write-Warn 'Whisper will run on CPU (int8). large-v3 is slow on CPU; consider -SetDefaultModel small.'
+    }
+    return $gpu
 }
 
 function _Install {
@@ -198,28 +237,21 @@ function _Install {
     Write-Stage "jobs_root  : $($cfg.jobs_root)"
     Write-Stage "models_root: $($cfg.models_root)"
 
-    if (-not (_DockerCli)) {
-        Write-Err 'docker CLI not found on PATH. Install Docker Desktop: https://www.docker.com/products/docker-desktop/'
-        exit $script:WL_EXIT.DOCKER_MISSING
-    }
-    if (-not (_DockerDaemon)) {
-        Write-Err 'Docker Desktop daemon not responding. Start Docker Desktop and re-run.'
-        exit $script:WL_EXIT.DOCKER_DOWN
-    }
+    _AssertDockerForSetup
     Write-Stage 'docker CLI + daemon OK'
 
-    if (-not (_GpuOk)) {
-        Write-Err 'Docker cannot see your NVIDIA GPU. In Docker Desktop enable WSL2 backend + install latest NVIDIA Game Ready / Studio driver.'
-        exit $script:WL_EXIT.GPU_MISSING
+    # Tools image first: the GPU probe runs inside it.
+    _BuildToolsImage
+    $gpu = _DetectAndSaveGpu $cfg
+    $gpuPresent = [bool]$gpu.present
+
+    if ($gpuPresent) {
+        Write-Stage 'building whisper image (CUDA 12.8, ~6 GB -- first build can take 5-15 min)...'
+        $code = Invoke-WLCompose $composeFile 'build' 'whisper'
+    } else {
+        Write-Stage 'building whisper CPU image (no CUDA, ~1 GB)...'
+        $code = Invoke-WLCompose $composeFile 'build' 'whisper-cpu'
     }
-    Write-Stage 'GPU visible to docker OK'
-
-    Write-Stage 'building tools image (CPU, small)...'
-    $code = Invoke-WLCompose $composeFile 'build' 'tools'
-    if ($code -ne 0) { Write-Err 'docker compose build tools failed'; exit $script:WL_EXIT.TOOLS_FAILED }
-
-    Write-Stage 'building whisper image (CUDA 12.8, ~6 GB -- first build can take 5-15 min)...'
-    $code = Invoke-WLCompose $composeFile 'build' 'whisper'
     if ($code -ne 0) { Write-Err 'docker compose build whisper failed'; exit $script:WL_EXIT.WHISPER_FAILED }
 
     Write-Stage "warming model cache for $Model (downloads ~3 GB on first run)..."
@@ -236,12 +268,12 @@ function _Install {
         )) -Name 'warmup-audio'
         if ($code -ne 0) { throw "warm-up audio build failed (exit $code)" }
 
-        $code = Invoke-WLRun ($script:WL_WHISPER_RUN_FLAGS + @(
+        $code = Invoke-WLRun ((Get-WLWhisperRunFlags -GpuPresent $gpuPresent) + @(
             '-e', "W_MODEL=$Model",
             '-v', "$(ConvertTo-DockerPath $warmDir):/work",
             '-v', "$(ConvertTo-DockerPath $cfg.models_root):/models",
             '-v', "$(ConvertTo-DockerPath $workerDir):/app:ro",
-            $script:WL_IMG_WHISPER, 'python3', '/app/whisper_run.py'
+            (Get-WLWhisperImage -GpuPresent $gpuPresent), 'python3', '/app/whisper_run.py'
         )) -Name 'warmup-whisper'
         if ($code -ne 0) {
             Write-Warn "model warm-up returned exit $code -- first /watch may pull the model on demand."
@@ -253,7 +285,21 @@ function _Install {
     }
 
     Set-Content -LiteralPath $script:WL_SETUP_MARKER -Value (Get-Date -Format o) -NoNewline
-    Write-Stage 'setup complete. /watch is ready.'
+    $modeLabel = if ($gpuPresent) { 'GPU mode' } else { 'CPU-only mode' }
+    Write-Stage "setup complete ($modeLabel). /watch is ready."
+    exit 0
+}
+#endregion
+
+#region DetectGpuCmd
+# Standalone re-probe: `setup.ps1 -DetectGpu`. Builds the tools image first
+# if missing (the probe runs inside it), persists the result, prints JSON.
+function _DetectGpuCmd {
+    $cfg = _EnsureConfig
+    _AssertDockerForSetup
+    if (-not (_TestImage $script:WL_IMG_TOOLS)) { _BuildToolsImage }
+    $gpu = _DetectAndSaveGpu $cfg
+    $gpu | ConvertTo-Json | Write-Output
     exit 0
 }
 #endregion
@@ -366,7 +412,7 @@ function _ListModels {
         Write-Output "models_root does not exist yet: $root"
         exit 0
     }
-    $hub = Join-Path $root 'hf-cache\hub'
+    $hub = Join-Path (Join-Path $root 'hf-cache') 'hub'
     if (-not (Test-Path -LiteralPath $hub)) {
         Write-Output "no HF cache yet under $root"
         exit 0
@@ -541,7 +587,7 @@ function _RemoveModelCmd {
     if (-not $ModelName) { Write-Err 'specify -ModelName.'; exit $script:WL_EXIT.PURGE_REFUSED }
     $cfg = _EnsureConfig
     $root = [string]$cfg.models_root
-    $hub = Join-Path $root 'hf-cache\hub'
+    $hub = Join-Path (Join-Path $root 'hf-cache') 'hub'
     $target = $null
     foreach ($d in Get-ChildItem -LiteralPath $hub -Directory -ErrorAction SilentlyContinue) {
         if ($d.Name -eq "models--$ModelName" -or $d.Name -like "models--*$ModelName") {
@@ -567,6 +613,7 @@ function _RemoveModelCmd {
 switch ($PSCmdlet.ParameterSetName) {
     'Check'                  { _Check }
     'Json'                   { _Json }
+    'DetectGpu'              { _DetectGpuCmd }
     'ShowConfig'             { _ShowConfig }
     'SetJobsRoot'            { _SetJobsRoot }
     'SetStagingRoot'         { _SetStagingRoot }

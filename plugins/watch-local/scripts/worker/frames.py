@@ -7,12 +7,27 @@ targets a frame budget by duration, hard-capped at 2 fps and 100 frames.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
 
 
 MAX_FPS = 2.0
+
+
+def hwaccel_args() -> list[str]:
+    """ffmpeg input options for hardware-accelerated DECODE, from env.
+
+    The launcher sets W_HWACCEL=cuda only when it detected a GPU with
+    working NVDEC and ran this container with --gpus. Decode-only offload:
+    frames come back to system memory, so the fps/scale filter chain is
+    unchanged. If hwaccel init still fails at runtime (driver hiccup),
+    ffmpeg logs a warning and falls back to software decode on its own --
+    verified behavior, so no retry logic here.
+    """
+    v = os.environ.get("W_HWACCEL", "")
+    return ["-hwaccel", v] if v else []
 
 
 def parse_time(value):
@@ -133,7 +148,7 @@ def extract(
         existing.unlink()
 
     output_pattern = str(out_dir / "frame_%04d.jpg")
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"] + hwaccel_args()
     if start_seconds is not None:
         cmd += ["-ss", f"{start_seconds:.3f}"]
     if end_seconds is not None:
@@ -190,8 +205,9 @@ def extract_stills(video_path, out_dir, timestamps, resolution=None, prefix="sho
         # Accurate seek: input seek (-ss before -i) is fast; combined with a
         # single output frame it lands on the keyframe-nearest decoded frame,
         # which is what we want for a UI screenshot. -q:v 2 = high-quality JPEG.
-        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-               "-ss", f"{t:.3f}", "-i", video_path, "-frames:v", "1"]
+        cmd = (["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+               + hwaccel_args()
+               + ["-ss", f"{t:.3f}", "-i", video_path, "-frames:v", "1"])
         if resolution:
             cmd += ["-vf", f"scale={int(resolution)}:-2"]
         cmd += ["-q:v", "2", str(out_path)]

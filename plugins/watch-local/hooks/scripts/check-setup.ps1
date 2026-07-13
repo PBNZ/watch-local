@@ -15,7 +15,12 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'SilentlyContinue'
 
-$marker = Join-Path $env:LOCALAPPDATA 'watch-local\.setup-complete'
+# Mirror _lib.ps1's platform dirs WITHOUT dot-sourcing it (hook must stay
+# cheap): LOCALAPPDATA on Windows, XDG data home elsewhere.
+$base = if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'watch-local' }
+        elseif ($env:XDG_DATA_HOME) { Join-Path $env:XDG_DATA_HOME 'watch-local' }
+        else { Join-Path (Join-Path (Join-Path $HOME '.local') 'share') 'watch-local' }
+$marker = Join-Path $base '.setup-complete'
 if (-not (Test-Path -LiteralPath $marker)) {
     Write-Output "/watch-local: setup never completed. Run /watch-setup before the first /watch."
 }
