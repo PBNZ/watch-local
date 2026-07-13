@@ -1,0 +1,20 @@
+{
+  "stale_after_days": 0,
+  "facts": {
+    "overall_status": {
+      "value": "0.4.0-rc.1 pre-release (release candidate)",
+      "as_of": "2026-07-14",
+      "note": "Release status"
+    },
+    "gpu_support": {
+      "value": "auto-detected -- NVDEC decode + CUDA whisper on NVIDIA GPUs, CPU-only fallback (int8) otherwise",
+      "as_of": "2026-07-14",
+      "note": "GPU / compute support"
+    },
+    "platform_support": {
+      "value": "Windows 11 (primary, best-tested); Linux/macOS via PowerShell 7, CPU mode (newer, less tested)",
+      "as_of": "2026-07-14",
+      "note": "Host platform support"
+    }
+  }
+}
