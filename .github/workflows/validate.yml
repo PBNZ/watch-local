@@ -52,16 +52,29 @@ jobs:
       - name: Install pytest
         run: python -m pip install pytest
 
-      - name: Install Pester 5
-        shell: ${{ matrix.engine }}
+      # `shell:` does not accept expressions, so each engine gets its own
+      # pair of steps gated by `if:`. The install must run IN the target
+      # engine -- 5.1 and pwsh use different module paths.
+      - name: Install Pester 5 (powershell)
+        if: matrix.engine == 'powershell'
+        shell: powershell
         run: |
-          if ($PSVersionTable.PSVersion.Major -lt 6) {
-            Install-PackageProvider -Name NuGet -Force -Scope CurrentUser | Out-Null
-          }
+          Install-PackageProvider -Name NuGet -Force -Scope CurrentUser | Out-Null
           Install-Module Pester -MinimumVersion 5.0 -MaximumVersion 5.99 -Force -SkipPublisherCheck -Scope CurrentUser
 
-      - name: Run unit suite
-        shell: ${{ matrix.engine }}
+      - name: Install Pester 5 (pwsh)
+        if: matrix.engine == 'pwsh'
+        shell: pwsh
+        run: Install-Module Pester -MinimumVersion 5.0 -MaximumVersion 5.99 -Force -SkipPublisherCheck -Scope CurrentUser
+
+      - name: Run unit suite (powershell)
+        if: matrix.engine == 'powershell'
+        shell: powershell
+        run: ./tests/run-tests.ps1 -Unit
+
+      - name: Run unit suite (pwsh)
+        if: matrix.engine == 'pwsh'
+        shell: pwsh
         run: ./tests/run-tests.ps1 -Unit
 
   ci-validators:
