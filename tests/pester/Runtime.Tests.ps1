@@ -59,7 +59,8 @@ Describe 'Test-WLRuntime against a fabricated tree' {
         foreach ($v in 'WL_RUNTIME_DIR', 'WL_RUNTIME_BIN', 'WL_RUNTIME_VENV', 'WL_RUNTIME_STATE') {
             $script:origVars[$v] = Get-Variable -Name $v -Scope Script -ValueOnly
         }
-        $script:sandbox = Join-Path $env:TEMP ('wl-rt-test-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+        # GetTempPath, not $env:TEMP -- TEMP is undefined on stock Linux.
+        $script:sandbox = Join-Path ([System.IO.Path]::GetTempPath()) ('wl-rt-test-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
         $script:WL_RUNTIME_DIR   = $sandbox
         $script:WL_RUNTIME_BIN   = Join-Path $sandbox 'bin'
         $script:WL_RUNTIME_VENV  = Join-Path $sandbox 'venvs/whisper'

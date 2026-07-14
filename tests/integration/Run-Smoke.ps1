@@ -22,7 +22,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $watch = Join-Path $PluginRoot 'scripts/watch.ps1'
-$tmp = Join-Path $env:TEMP ('wl-smoke-' + [Guid]::NewGuid().ToString('N').Substring(0,8))
+$tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('wl-smoke-' + [Guid]::NewGuid().ToString('N').Substring(0,8))
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 
 try {

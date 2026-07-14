@@ -15,7 +15,8 @@ BeforeAll {
 
     function _NewSandbox {
         $name = 'wl-grab-test-' + [Guid]::NewGuid().ToString('N').Substring(0,8)
-        $sandbox = Join-Path $env:TEMP $name
+        # GetTempPath, not $env:TEMP -- TEMP is undefined on stock Linux.
+        $sandbox = Join-Path ([System.IO.Path]::GetTempPath()) $name
         $jobs    = Join-Path $sandbox 'jobs'
         $appdata = Join-Path $sandbox 'appdata'
         $configFile = Join-Path $appdata 'watch-local/config.json'

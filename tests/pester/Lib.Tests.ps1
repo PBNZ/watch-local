@@ -60,7 +60,9 @@ Describe 'Display path normalization' {
 
 Describe 'Assert-InsideRoot scope invariant' {
     BeforeAll {
-        $script:tmpRoot = Join-Path $env:TEMP ("wl-scope-test-" + [Guid]::NewGuid().ToString('N').Substring(0,8))
+        # [IO.Path]::GetTempPath(), not $env:TEMP -- TEMP is undefined on
+        # stock Linux (e.g. GitHub's ubuntu runners).
+        $script:tmpRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("wl-scope-test-" + [Guid]::NewGuid().ToString('N').Substring(0,8))
         New-Item -ItemType Directory -Force -Path (Join-Path $tmpRoot 'good') | Out-Null
 
         # Subshell helper. Lowers $ErrorActionPreference around the native call so
@@ -97,7 +99,7 @@ Describe 'Assert-InsideRoot scope invariant' {
     }
 
     It 'rejects parent dir' {
-        Invoke-AssertSubshell $env:TEMP $tmpRoot | Should -Not -Be 0
+        Invoke-AssertSubshell ([System.IO.Path]::GetTempPath()) $tmpRoot | Should -Not -Be 0
     }
 
     It 'rejects root itself (only strict subdirs allowed)' {
@@ -143,7 +145,7 @@ Describe 'Partial SHA helper' {
     }
 
     It 'returns null for missing file' {
-        Get-PartialSHA256 -path (Join-Path $env:TEMP ('nope-' + [Guid]::NewGuid())) | Should -BeNullOrEmpty
+        Get-PartialSHA256 -path (Join-Path ([System.IO.Path]::GetTempPath()) ('nope-' + [Guid]::NewGuid())) | Should -BeNullOrEmpty
     }
 }
 

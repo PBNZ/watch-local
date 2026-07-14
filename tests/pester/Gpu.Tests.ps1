@@ -96,9 +96,21 @@ Describe 'Tools worker env (NVDEC decode)' {
 
 Describe 'Platform default dirs' {
     It 'Windows dirs live under LOCALAPPDATA / TEMP' {
-        $d = Get-WLPlatformDirs -IsWindowsPlatform $true
-        $d.Base    | Should -Be (Join-Path $env:LOCALAPPDATA 'watch-local')
-        $d.Staging | Should -Be (Join-Path $env:TEMP 'watch-local-stage')
+        # Pin the env vars for the duration: they are undefined on stock
+        # Linux (GitHub ubuntu runners), and the assertion should be
+        # deterministic everywhere.
+        $oldLad = $env:LOCALAPPDATA
+        $oldTemp = $env:TEMP
+        try {
+            $env:LOCALAPPDATA = Join-Path ([System.IO.Path]::GetTempPath()) 'wl-fake-localappdata'
+            $env:TEMP = Join-Path ([System.IO.Path]::GetTempPath()) 'wl-fake-temp'
+            $d = Get-WLPlatformDirs -IsWindowsPlatform $true
+            $d.Base    | Should -Be (Join-Path $env:LOCALAPPDATA 'watch-local')
+            $d.Staging | Should -Be (Join-Path $env:TEMP 'watch-local-stage')
+        } finally {
+            $env:LOCALAPPDATA = $oldLad
+            $env:TEMP = $oldTemp
+        }
     }
 
     It 'non-Windows dirs live under XDG data home + system temp' {

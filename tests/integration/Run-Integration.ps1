@@ -31,7 +31,7 @@ if (-not $status.ok) {
     exit 1
 }
 
-$tmpRoot = Join-Path $env:TEMP ('wl-int-' + [Guid]::NewGuid().ToString('N').Substring(0,8))
+$tmpRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('wl-int-' + [Guid]::NewGuid().ToString('N').Substring(0,8))
 $workDir = Join-Path $tmpRoot 'work'
 New-Item -ItemType Directory -Force -Path $workDir | Out-Null
 

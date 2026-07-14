@@ -24,9 +24,6 @@ RUN python3 -m pip install --no-cache-dir pytest \
 # Pester 5 API.
 RUN pwsh -NoProfile -Command "Install-Module Pester -MinimumVersion 5.0 -MaximumVersion 5.99 -Force -SkipPublisherCheck -Scope AllUsers"
 
-# The Pester sandboxes build paths from these; _lib.ps1 itself uses the
-# XDG fallback (~/.local/share) on Linux and ignores LOCALAPPDATA.
-ENV TEMP=/tmp \
-    LOCALAPPDATA=/tmp/localappdata
-
-RUN mkdir -p /tmp/localappdata
+# Deliberately NO TEMP/LOCALAPPDATA env vars: stock Linux (like GitHub's
+# ubuntu runners) doesn't define them, and the suite must not rely on
+# them. Setting them here once masked exactly that bug.
