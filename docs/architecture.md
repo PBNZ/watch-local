@@ -18,64 +18,98 @@ host: Windows (powershell.exe) or Linux/macOS (pwsh) + Claude Code
   |   3. disk-space pre-flight                              |
   |   3b. resolve GPU mode (config `gpu` block; one-time    |
   |       probe-and-persist for pre-upgrade configs)        |
-  |   4. spawn 'tools' container                            |
-  |        GPU+NVDEC: --gpus all + W_HWACCEL=cuda           |
+  |   4. run tools worker (native python)                   |
+  |        GPU+NVDEC: W_HWACCEL=cuda (decode offload)       |
   |        -> intermediate.json + frames/* + audio.mp3      |
-  |   5. spawn whisper container (ALWAYS runs)              |
-  |        GPU: whisper:cu128 --gpus all (cuda/float16)     |
-  |        CPU: whisper:cpu (cpu/int8)                      |
+  |   5. run whisper worker (ALWAYS runs)                   |
+  |        GPU: cuda/float16 via pip CUDA wheels            |
+  |        CPU: cpu/int8                                    |
   |        -> transcript_whisper.json                       |
-  |   6. spawn 'tools' container again for compare.py       |
+  |   6. run compare.py worker                              |
   |        -> comparison.json                               |
   |   7. pick primary transcript per provenance rules       |
-  |   8. emit markdown report (paths rewritten to host)     |
+  |   8. emit markdown report                               |
   |   9. (optional) -SaveHere -> save-here.ps1              |
   |  10. (optional) -Cleanup  -> nuke this job dir          |
   +---------------------------------------------------------+
 ```
 
+## Portable runtime (no Docker)
+
+There are no containers. All workers are plain Python scripts
+(`scripts/worker/*.py`) executed by a self-provisioned, fully portable
+runtime that `/watch-setup` downloads into the state root:
+
+```
+<state root>\runtime\
+  manifest.json            # what is actually installed (versions, date)
+  bin\
+    uv[.exe]               # single-binary python manager
+    yt-dlp[.exe]           # official standalone binary (self-updates: setup.ps1 -UpdateYtDlp)
+    deno[.exe]             # yt-dlp's JS-challenge runtime
+    ffmpeg\bin\ffmpeg[.exe], ffprobe[.exe]   # static build (NVDEC-capable)
+  python\                  # uv-managed CPython (pinned minor version)
+  venvs\whisper\           # faster-whisper + ctranslate2
+                           #   + nvidia cuBLAS/cuDNN pip wheels iff GPU detected
+  uv-cache\                # uv download cache (kept inside the root on purpose)
+  deno-cache\              # DENO_DIR (same reason)
+```
+
+Pinned versions, per-platform download URLs (immutable versioned release
+assets), and sha256 hashes live in `scripts/runtime-manifest.json`;
+`_runtime.ps1` verifies every download against its hash. Supported
+platforms: `win_x64`, `linux_x64`, `macos_arm64` (evermeet ffmpeg is
+x86_64 and runs under Rosetta 2).
+
+Containment rules, enforced by `_runtime.ps1`:
+
+- Nothing is added to the system PATH, registry, or Program Files. Each
+  worker process gets a per-process PATH with `runtime\bin` +
+  `runtime\bin\ffmpeg\bin` prepended (workers find tools via
+  `shutil.which`).
+- `uv python install` runs with `--no-bin --no-registry` and
+  `UV_PYTHON_INSTALL_DIR`/`UV_CACHE_DIR` inside the runtime dir, so the
+  interpreter leaves no trace in `~/.local/bin` or the Windows registry.
+- `DENO_DIR` points inside the runtime dir (deno would otherwise cache in
+  the user profile).
+
+Deleting the state root therefore removes every trace of the plugin's
+tooling. One Python serves all workers: the tools-side workers are
+stdlib-only, so they run on the whisper venv's interpreter too.
+
+Worker invocation is `Invoke-WLWorker` (env-var contract `W_*`, stdout
+streamed, exit code returned) and `Invoke-WLWorkerCapture` (stdout
+captured -- disk.py probe, stills JSON). Workers receive the job dir as
+`W_WORK_DIR` (a real host path) -- there is no path translation layer.
+
 ## GPU detection
 
-All work happens in containers, so the only GPU visibility that matters is
-docker's. `Test-WLGpu` (in `_lib.ps1`) probes through the tools image:
+`Test-WLGpuNative` (in `_runtime.ps1`) probes the host directly:
 
-1. `docker run --gpus all -e NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
-   ... nvidia-smi --query-gpu=name,driver_version,memory.total,compute_cap`
-   -- the NVIDIA runtime injects `nvidia-smi` into any image, so no CUDA
-   base is needed. Success -> GPU present + identity.
-2. A 1-second h264 clip is generated in-container and decoded with the
-   explicit `h264_cuvid` decoder -- a hard end-to-end NVDEC test (the
-   `video` capability is what injects `libnvcuvid`; the default capability
-   set does not include it).
+1. `nvidia-smi --query-gpu=name,driver_version,memory.total,compute_cap`
+   (found on PATH, System32, or the legacy NVSMI dir) -- presence +
+   identity.
+2. A 1-second h264 clip is generated with the portable ffmpeg and decoded
+   with the explicit `h264_cuvid` decoder -- a hard end-to-end NVDEC test.
 
-The result (`present`, `name`, `driver`, `vram_mb`, `compute_cap`, `nvdec`,
-`checked_at`) is persisted as the `gpu` block in config.json by setup, and
-re-probed on demand with `setup.ps1 -DetectGpu`. Configs from older
-versions migrate on their first `/watch` (probe once, persist). No GPU is
-never fatal: it selects CPU-only mode.
+A third, whisper-specific signal is probed after the venv exists:
+`ctranslate2.get_cuda_device_count()` through the pip CUDA wheels
+(`Test-WLCudaWhisper`), persisted as `gpu.cuda_whisper`. Whisper runs on
+cuda/float16 only when that passed; a GPU whose CUDA wheels don't load
+degrades to cpu/int8 instead of failing the run. On Windows the wheel
+DLL dirs (`site-packages/nvidia/*/bin`) are registered by
+`worker/cuda_paths.py` before ctranslate2 is imported.
+
+The result (`present`, `name`, `driver`, `vram_mb`, `compute_cap`,
+`nvdec`, `cuda_whisper`, `checked_at`) is persisted as the `gpu` block in
+config.json by setup, and re-probed on demand with `setup.ps1 -DetectGpu`.
+Configs from older versions migrate on their first `/watch` (probe once,
+persist). No GPU is never fatal: it selects CPU-only mode.
 
 NVDEC decode is decode-only offload: decoded frames return to system
 memory and the existing `fps=...,scale=...` filter chain runs unchanged on
 CPU. When hwaccel init fails at runtime despite detection (driver hiccup),
 ffmpeg logs a warning and falls back to software decode on its own.
-
-## Containers
-
-Docker images, built locally on first `/watch-setup` (the whisper variant
-matching the detected mode is built; the other is not):
-
-| Image | Base | Size | Purpose |
-|---|---|---|---|
-| `watch-local/tools:1` | `python:3.11-slim` | ~900 MB | yt-dlp + ffmpeg + Python workers. ffmpeg's cuvid/NVDEC decoders activate when run with `--gpus`. |
-| `watch-local/whisper:cu128` | `nvidia/cuda:12.8.0-cudnn-runtime-ubuntu22.04` | ~9 GB | faster-whisper, CUDA/float16. GPU machines. |
-| `watch-local/whisper:cpu` | `python:3.11-slim` | ~1 GB | faster-whisper, cpu/int8. CPU-only machines. |
-
-Per-call workers run via plain `docker run --rm` (`Invoke-WLRun`) -- they
-exist only for the lifetime of the call; nothing is `up -d`. Image builds
-still go through `docker compose build` (`docker-compose.yml` is the build
-manifest). `docker compose run` is deliberately NOT used: on the Docker
-Desktop WSL2 backend it intermittently deadlocks at container start (the
-v0.2.0 blocker -- see CHANGELOG 0.2.2).
 
 ## Default paths
 
@@ -84,6 +118,7 @@ v0.2.0 blocker -- see CHANGELOG 0.2.2).
   config.json              # user config (persistent)
   .setup-complete          # setup marker
   last-job.json            # registry for /watch:save-here last-job lookup
+  runtime\                 # portable tools + python (see above)
   jobs\<slug>\             # per-call artifacts
     download\              # downloaded video + info.json + VTTs (URL only)
     frames\frame_NNNN.jpg
@@ -105,15 +140,19 @@ On Linux/macOS the defaults are `$XDG_DATA_HOME/watch-local` (fallback
 
 State deliberately lives OUTSIDE the plugin install dir: `${CLAUDE_PLUGIN_ROOT}`
 is replaced on every plugin update, so anything persistent stored there (model
-caches, jobs, config) would silently vanish. `%LOCALAPPDATA%\watch-local\` is
-Windows' conventional per-user app-data location (XDG data home is the
+caches, jobs, config, the runtime) would silently vanish. `%LOCALAPPDATA%\watch-local\`
+is Windows' conventional per-user app-data location (XDG data home is the
 equivalent elsewhere), survives plugin updates and reinstalls, and keeps
 multi-GB artifacts out of `~/.claude`. The scripts never write runtime state
-into the plugin directory.
+into the plugin directory. **Uninstall = remove the plugin + delete this one
+folder.**
 
-The plugin's SessionStart hook is a single `Test-Path` on the setup marker
-(fast by design -- SessionStart fires on every startup/resume/clear/compact).
-The full Docker/image preflight runs via `setup.ps1 -Check` in SKILL.md Step 0
+The plugin's SessionStart hook is a tiny Node script (`hooks/scripts/
+check-setup.mjs`): a marker-file existence check, plus -- on Linux/macOS --
+a clear "install PowerShell 7" error when `pwsh` is missing (pwsh is not
+preinstalled there; Node always exists because Claude Code runs on it).
+Fast by design -- SessionStart fires on every startup/resume/clear/compact.
+The full runtime preflight runs via `setup.ps1 -Check` in SKILL.md Step 0
 before each `/watch`.
 
 ## Transcript policy (always run Whisper)
@@ -132,13 +171,6 @@ emits a worst-of-three significance (`match` / `minor` / `major`).
 Major divergence triggers a callout in the report.
 
 See [transcript-quality.md](./transcript-quality.md) for details.
-
-## Path translation
-
-Containers see `/work`, `/input`, `/models`. The host launcher
-rewrites these back to Windows forward-slash form (e.g.
-`C:/Users/Peter/AppData/Local/watch-local/jobs/abc/frames/frame_0001.jpg`)
-before printing. Claude's `Read` tool accepts that form natively.
 
 ## Safety: scope invariant
 
@@ -159,14 +191,14 @@ Documented in `scripts/_lib.ps1`:
 | Code | Meaning |
 |---|---|
 | 0 | success |
-| 10 | docker CLI missing |
-| 11 | docker daemon down |
+| 10 | runtime not provisioned (run /watch-setup) |
+| 11 | runtime provisioned but incomplete (setup.ps1 -UpdateRuntime) |
 | 12 | retired (0.4.0): GPU absence now selects CPU mode instead of failing |
 | 20 | source not found / unreachable |
 | 21 | UNC stage copy failed |
 | 22 | incompatible flags (-OutDir + -SaveHere etc.) |
-| 30 | tools container / still extraction failed |
-| 31 | whisper image build failed (setup). During /watch a whisper failure is non-fatal: partial report, exit 0 |
+| 30 | tools worker / still extraction failed |
+| 31 | whisper setup failure (setup). During /watch a whisper failure is non-fatal: partial report, exit 0 |
 | 40 | save-here transfer failed |
 | 50 | insufficient disk space |
 | 60 | purge refused (outside safe roots, missing confirmation, etc.) |

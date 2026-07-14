@@ -30,7 +30,6 @@ import re
 import sys
 from pathlib import Path
 
-sys.path.insert(0, "/app")
 from captions import parse_vtt  # noqa: E402
 
 
@@ -98,7 +97,8 @@ RANK = {"match": 0, "minor": 1, "major": 2}
 def main() -> int:
     creator_vtt = os.environ.get("W_CREATOR_VTT") or ""
     whisper_json = os.environ.get("W_WHISPER_JSON") or ""
-    out_json = os.environ.get("W_OUT_JSON") or "/work/comparison.json"
+    work = os.environ.get("W_WORK_DIR", "/work")
+    out_json = os.environ.get("W_OUT_JSON") or os.path.join(work, "comparison.json")
 
     if not whisper_json or not Path(whisper_json).exists():
         print(f"ERROR: whisper transcript missing: {whisper_json}", file=sys.stderr)

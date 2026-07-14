@@ -5,8 +5,8 @@
 # Pester 5 syntax.
 
 BeforeAll {
-    $script:Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).ProviderPath
-    $script:LibPath = Join-Path $Root 'plugins\watch-local\scripts\_lib.ps1'
+    $script:Root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).ProviderPath
+    $script:LibPath = Join-Path $Root 'plugins/watch-local/scripts/_lib.ps1'
     . $script:LibPath
 }
 
@@ -48,25 +48,13 @@ Describe 'Slug helper' {
     }
 }
 
-Describe 'Path translation' {
-    It 'ConvertTo-DockerPath flips backslashes' {
-        ConvertTo-DockerPath 'C:\foo\bar' | Should -Be 'C:/foo/bar'
+Describe 'Display path normalization' {
+    It 'ConvertTo-WLSlashPath flips backslashes' {
+        ConvertTo-WLSlashPath 'C:\foo\bar' | Should -Be 'C:/foo/bar'
     }
 
-    It 'ConvertTo-HostPath rewrites /work/...' {
-        $h = ConvertTo-HostPath -ContainerPath '/work/frames/frame_0001.jpg' `
-            -WorkHost 'C:\jobs\abc'
-        $h | Should -Be 'C:/jobs/abc/frames/frame_0001.jpg'
-    }
-
-    It 'ConvertTo-HostPath rewrites /input/...' {
-        $h = ConvertTo-HostPath -ContainerPath '/input/video.mp4' `
-            -WorkHost 'C:\jobs\abc' -InputHost 'D:\videos'
-        $h | Should -Be 'D:/videos/video.mp4'
-    }
-
-    It 'ConvertTo-HostPath returns null for null input' {
-        ConvertTo-HostPath -ContainerPath $null -WorkHost 'C:\anywhere' | Should -BeNullOrEmpty
+    It 'ConvertTo-WLSlashPath leaves forward slashes alone' {
+        ConvertTo-WLSlashPath 'C:/already/fine' | Should -Be 'C:/already/fine'
     }
 }
 
@@ -78,11 +66,13 @@ Describe 'Assert-InsideRoot scope invariant' {
         # Subshell helper. Lowers $ErrorActionPreference around the native call so
         # PS 7's $PSNativeCommandUseErrorActionPreference doesn't turn the child's
         # stderr + non-zero exit into a RemoteException in the parent test process.
+        # Child runs on the SAME engine as the test runner (Get-WLPSEngine), so
+        # `powershell -File run-tests.ps1` covers 5.1 and `pwsh -File ...` covers 7.
         function script:Invoke-AssertSubshell([string]$Target, [string]$Root) {
             $prev = $ErrorActionPreference
             $ErrorActionPreference = 'Continue'
             try {
-                & powershell.exe -NoProfile -Command "
+                & (Get-WLPSEngine) -NoProfile -Command "
                     `$ErrorActionPreference = 'Continue'
                     . '$script:LibPath'
                     Assert-InsideRoot -Target '$Target' -Root '$Root'

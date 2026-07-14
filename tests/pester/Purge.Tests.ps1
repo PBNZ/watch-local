@@ -5,8 +5,13 @@
 #   - Preview is emitted before any deletion.
 
 BeforeAll {
-    $script:Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).ProviderPath
-    $script:Setup = Join-Path $Root 'plugins\watch-local\scripts\setup.ps1'
+    $script:Root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).ProviderPath
+    $script:Setup = Join-Path $Root 'plugins/watch-local/scripts/setup.ps1'
+
+    # Child scripts run on the SAME engine as the test runner, so the suite
+    # covers PowerShell 5.1 when launched via powershell.exe and PowerShell 7
+    # when launched via pwsh (mirrors _lib.ps1's Get-WLPSEngine).
+    $script:PSEngine = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh' } else { 'powershell.exe' }
 
     function _NewSandbox {
         $name = 'wl-purge-test-' + [Guid]::NewGuid().ToString('N').Substring(0,8)
@@ -15,7 +20,7 @@ BeforeAll {
         $models  = Join-Path $sandbox 'models'
         $staging = Join-Path $sandbox 'staging'
         $appdata = Join-Path $sandbox 'appdata'
-        $configFile = Join-Path $appdata 'watch-local\config.json'
+        $configFile = Join-Path $appdata 'watch-local/config.json'
         New-Item -ItemType Directory -Force -Path $jobs, $models, $staging, (Split-Path $configFile -Parent) | Out-Null
         $cfg = [pscustomobject]@{
             jobs_root           = $jobs
@@ -65,10 +70,14 @@ BeforeAll {
         # deterministic non-interactive path (preview + refuse) instead of
         # blocking on ReadLine.
         $stdinFile = New-TemporaryFile
+        # Redirect the state root into the sandbox on BOTH platforms:
+        # _lib.ps1 reads LOCALAPPDATA on Windows and XDG_DATA_HOME elsewhere.
         $oldLocalAppData = $env:LOCALAPPDATA
+        $oldXdg = $env:XDG_DATA_HOME
         try {
             $env:LOCALAPPDATA = $LocalAppData
-            $p = Start-Process -FilePath 'powershell.exe' -ArgumentList $quoted `
+            $env:XDG_DATA_HOME = $LocalAppData
+            $p = Start-Process -FilePath $script:PSEngine -ArgumentList $quoted `
                 -RedirectStandardInput  $stdinFile.FullName `
                 -RedirectStandardOutput $stdoutFile.FullName `
                 -RedirectStandardError  $stderrFile.FullName `
@@ -77,6 +86,7 @@ BeforeAll {
             return (Get-Content $stdoutFile.FullName -Raw) + (Get-Content $stderrFile.FullName -Raw)
         } finally {
             $env:LOCALAPPDATA = $oldLocalAppData
+            $env:XDG_DATA_HOME = $oldXdg
             Remove-Item -LiteralPath $stdoutFile.FullName -Force -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $stderrFile.FullName -Force -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $stdinFile.FullName -Force -ErrorAction SilentlyContinue
@@ -125,7 +135,7 @@ Describe 'PurgeJobs scope invariant' {
     It 'rejects -PurgeJob with traversal in slug' {
         # Even constructing a malicious slug -- Join-Path + Assert-InsideRoot
         # rejects.
-        $out = _RunSetup -LocalAppData $S.AppData -ArgList @('-PurgeJob','-Slug','..\..\Windows')
+        $out = _RunSetup -LocalAppData $S.AppData -ArgList @('-PurgeJob','-Slug','../../Windows')
         # Either SOURCE_BAD (path doesn't exist) or PURGE_REFUSED. Both are
         # safe outcomes.
         $script:_lastCode | Should -BeIn @(20, 60)

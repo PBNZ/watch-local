@@ -23,8 +23,7 @@ import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, "/app")
-from frames import extract_stills, parse_time  # noqa: E402
+from frames import extract_stills, parse_time
 
 
 def _env(name: str, default: str = "") -> str:
@@ -35,7 +34,8 @@ def _env(name: str, default: str = "") -> str:
 def main() -> int:
     video = _env("W_VIDEO")
     shots = _env("W_SHOTS")
-    out_dir = _env("W_OUT_DIR", "/work/screenshots")
+    work = _env("W_WORK_DIR", "/work")
+    out_dir = _env("W_OUT_DIR", os.path.join(work, "screenshots"))
     prefix = _env("W_PREFIX", "shot")
     res_raw = _env("W_STILL_RES", "")
     try:
@@ -50,7 +50,7 @@ def main() -> int:
         print("ERROR: W_SHOTS env var required", file=sys.stderr)
         return 2
     if not Path(video).exists():
-        print(f"ERROR: source video not found in container: {video}", file=sys.stderr)
+        print(f"ERROR: source video not found: {video}", file=sys.stderr)
         return 2
 
     timestamps = []

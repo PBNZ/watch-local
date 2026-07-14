@@ -8,7 +8,9 @@
         -Check                    silent preflight, non-zero exit on miss
         -Json                     machine-readable status snapshot
         -DetectGpu                (re-)probe NVIDIA GPU + NVDEC, persist to config
-        -Install (default)        detect GPU, build images + warm whisper model
+        -Install (default)        provision portable runtime, detect GPU, warm model
+        -UpdateRuntime            re-converge runtime to the pinned manifest
+        -UpdateYtDlp              yt-dlp self-update (YouTube breakage fixes)
         -ShowConfig               print config.json
         -SetJobsRoot <path>       relocate jobs_root
         -SetModelsRoot <path>     relocate models_root (use -MoveModels)
@@ -41,6 +43,11 @@ param(
     [switch]$Force,
     [Parameter(ParameterSetName='Install')]
     [string]$Model,
+
+    [Parameter(ParameterSetName='UpdateRuntime')]
+    [switch]$UpdateRuntime,
+    [Parameter(ParameterSetName='UpdateYtDlp')]
+    [switch]$UpdateYtDlp,
 
     [Parameter(ParameterSetName='ShowConfig')]
     [switch]$ShowConfig,
@@ -102,10 +109,7 @@ $ErrorActionPreference = 'Stop'
 
 . "$PSScriptRoot\_lib.ps1"
 
-$pluginRoot  = Split-Path -Parent $PSScriptRoot
-$dockerDir   = Join-Path $pluginRoot 'docker'
-$composeFile = Join-Path $dockerDir 'docker-compose.yml'
-$workerDir   = Join-Path $PSScriptRoot 'worker'
+$pluginRoot = Split-Path -Parent $PSScriptRoot
 
 function _EnsureConfig {
     $cfg = Get-WLConfig
@@ -117,55 +121,13 @@ function _EnsureConfig {
 #endregion
 
 #region Status
-# Native commands routed to docker.exe occasionally write to stderr even on
-# expected failures (e.g. "no such image"). Under StrictMode + Stop, that
-# stderr becomes a terminating error. Lower ErrorActionPreference inside
-# these helpers so they can return a plain bool.
-function _TestImage([string]$tag) {
-    $orig = $ErrorActionPreference
-    try {
-        $ErrorActionPreference = 'Continue'
-        & docker image inspect $tag *>$null
-        return ($LASTEXITCODE -eq 0)
-    } catch {
-        return $false
-    } finally {
-        $ErrorActionPreference = $orig
-    }
-}
-function _DockerCli { [bool](Get-Command docker -ErrorAction SilentlyContinue) }
-function _DockerDaemon {
-    $orig = $ErrorActionPreference
-    try {
-        $ErrorActionPreference = 'Continue'
-        & docker info *>$null
-        return ($LASTEXITCODE -eq 0)
-    } catch {
-        return $false
-    } finally {
-        $ErrorActionPreference = $orig
-    }
-}
-
 function _Status {
     $cfg = Get-WLConfig
-    # Which whisper image counts as "present" depends on the detected mode.
-    # Pre-upgrade configs have no gpu block yet: accept either variant so
-    # existing installs don't get pushed through setup again (their first
-    # /watch runs the one-time detection).
-    $gpu = Get-WLObjectProp $cfg 'gpu'
-    $whisperOk = if ($null -eq $gpu) {
-        (_TestImage $script:WL_IMG_WHISPER) -or (_TestImage $script:WL_IMG_WHISPER_CPU)
-    } else {
-        _TestImage (Get-WLWhisperImage -GpuPresent ([bool](Get-WLObjectProp $gpu 'present')))
-    }
+    $rt = Test-WLRuntime
     return [ordered]@{
-        docker_cli     = _DockerCli
-        docker_running = $(if (_DockerCli) { _DockerDaemon } else { $false })
-        tools_image    = _TestImage $script:WL_IMG_TOOLS
-        whisper_image  = $whisperOk
-        marker         = (Test-Path -LiteralPath $script:WL_SETUP_MARKER)
-        config         = $cfg
+        runtime = $rt
+        marker  = (Test-Path -LiteralPath $script:WL_SETUP_MARKER)
+        config  = $cfg
     }
 }
 #endregion
@@ -173,11 +135,9 @@ function _Status {
 #region CheckMode
 function _Check {
     $s = _Status
-    if (-not $s.docker_cli)     { Write-Warn 'docker CLI not on PATH';                exit 2 }
-    if (-not $s.docker_running) { Write-Warn 'Docker Desktop daemon not responding'; exit 3 }
-    if (-not $s.tools_image)    { Write-Warn 'watch-local/tools image missing';      exit 4 }
-    if (-not $s.whisper_image)  { Write-Warn 'watch-local/whisper image missing';    exit 4 }
-    if (-not $s.marker)         { Write-Warn 'setup marker missing -- run setup.ps1'; exit 5 }
+    if (-not $s.runtime.provisioned) { Write-Warn 'runtime not provisioned -- run setup.ps1'; exit 2 }
+    if (-not $s.runtime.ok)          { Write-Warn 'runtime incomplete -- run setup.ps1 -UpdateRuntime'; exit 4 }
+    if (-not $s.marker)              { Write-Warn 'setup marker missing -- run setup.ps1'; exit 5 }
     exit 0
 }
 #endregion
@@ -193,28 +153,12 @@ function _Json {
 #endregion
 
 #region Install
-function _AssertDockerForSetup {
-    if (-not (_DockerCli)) {
-        Write-Err 'docker CLI not found on PATH. Install Docker (Desktop on Windows/macOS, Engine on Linux): https://docs.docker.com/get-docker/'
-        exit $script:WL_EXIT.DOCKER_MISSING
-    }
-    if (-not (_DockerDaemon)) {
-        Write-Err 'Docker daemon not responding. Start Docker (Desktop) and re-run.'
-        exit $script:WL_EXIT.DOCKER_DOWN
-    }
-}
-
-function _BuildToolsImage {
-    Write-Stage 'building tools image (CPU, small)...'
-    $code = Invoke-WLCompose $composeFile 'build' 'tools'
-    if ($code -ne 0) { Write-Err 'docker compose build tools failed'; exit $script:WL_EXIT.TOOLS_FAILED }
-}
-
-# Probe the GPU (through the tools image), persist the result in
-# config.json, and narrate what was found. Returns the gpu object.
+# Probe the GPU natively (host nvidia-smi + portable-ffmpeg NVDEC test),
+# persist the result in config.json, and narrate what was found. Call
+# only after Install-WLRuntimeBinaries (the NVDEC leg needs ffmpeg).
 function _DetectAndSaveGpu([hashtable]$cfg) {
-    Write-Stage 'detecting NVIDIA GPU through docker (10-30s)...'
-    $gpu = Test-WLGpu
+    Write-Stage 'detecting NVIDIA GPU (host nvidia-smi + NVDEC probe)...'
+    $gpu = Test-WLGpuNative
     $cfg.gpu = $gpu
     Save-WLConfig $cfg
     if ($gpu.present) {
@@ -222,10 +166,55 @@ function _DetectAndSaveGpu([hashtable]$cfg) {
         Write-Stage ("GPU: {0} -- {1} MB VRAM, driver {2}, compute {3}. {4}" -f `
             $gpu.name, $gpu.vram_mb, $gpu.driver, $gpu.compute_cap, $nvdecLabel)
     } else {
-        Write-Warn 'no NVIDIA GPU visible to Docker -- configuring CPU-only mode.'
+        Write-Warn 'no NVIDIA GPU detected -- configuring CPU-only mode.'
         Write-Warn 'Whisper will run on CPU (int8). large-v3 is slow on CPU; consider -SetDefaultModel small.'
     }
     return $gpu
+}
+
+# Probe venv-level CUDA (ctranslate2 reaching the GPU through the pip
+# wheels), persist as gpu.cuda_whisper, narrate. Call after
+# Install-WLRuntimePython.
+function _ProbeAndSaveCudaWhisper([hashtable]$cfg, $gpu) {
+    $cw = if ([bool](Get-WLObjectProp $gpu 'present')) { Test-WLCudaWhisper } else { $false }
+    $cfg.gpu = Set-WLGpuCudaWhisper -Gpu $gpu -Value $cw
+    Save-WLConfig $cfg
+    if ([bool](Get-WLObjectProp $gpu 'present')) {
+        if ($cw) { Write-Stage 'CUDA whisper: OK (float16)' }
+        else { Write-Warn 'GPU present but ctranslate2 cannot reach CUDA -- whisper will run on CPU (int8). Check the VC++ runtime, then setup.ps1 -UpdateRuntime.' }
+    }
+    return $cfg.gpu
+}
+
+# Warm the whisper model cache: 1s of silence through the real worker so
+# faster-whisper downloads the model into models_root\hf-cache.
+function _WarmModel([hashtable]$cfg, $gpu, [string]$ModelName) {
+    Write-Stage "warming model cache for $ModelName (downloads the model on first run)..."
+    $warmDir = Join-Path $script:WL_BASE_DIR 'warm'
+    New-Item -ItemType Directory -Force -Path $warmDir | Out-Null
+    try {
+        $ffmpeg = Get-WLFfmpegBin
+        $orig = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            & $ffmpeg -hide_banner -loglevel error -y -f lavfi -i 'anullsrc=cl=mono:r=16000' -t 1 -b:a 64k (Join-Path $warmDir 'audio.mp3') 2>&1 | Out-Null
+            $code = $LASTEXITCODE
+        } finally { $ErrorActionPreference = $orig }
+        if ($code -ne 0) { throw "warm-up audio build failed (exit $code)" }
+
+        $warmEnv = (Get-WLWhisperWorkerEnv -Gpu $gpu -ModelsRoot ([string]$cfg.models_root)) + @{
+            W_WORK_DIR = $warmDir
+            W_MODEL    = $ModelName
+        }
+        $code = Invoke-WLWorker -Script 'whisper_run.py' -EnvVars $warmEnv -Name 'warmup-whisper'
+        if ($code -ne 0) {
+            Write-Warn "model warm-up returned exit $code -- first /watch may pull the model on demand."
+        }
+    } catch {
+        Write-Warn "model warm-up failed: $($_.Exception.Message)"
+    } finally {
+        Remove-Item -LiteralPath $warmDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function _Install {
@@ -237,52 +226,18 @@ function _Install {
     Write-Stage "jobs_root  : $($cfg.jobs_root)"
     Write-Stage "models_root: $($cfg.models_root)"
 
-    _AssertDockerForSetup
-    Write-Stage 'docker CLI + daemon OK'
+    # Binaries first: the NVDEC leg of GPU detection needs ffmpeg.
+    Write-Stage 'provisioning portable runtime (yt-dlp, ffmpeg, deno, uv)...'
+    Install-WLRuntimeBinaries -Force:$Force
 
-    # Tools image first: the GPU probe runs inside it.
-    _BuildToolsImage
     $gpu = _DetectAndSaveGpu $cfg
     $gpuPresent = [bool]$gpu.present
 
-    if ($gpuPresent) {
-        Write-Stage 'building whisper image (CUDA 12.8, ~6 GB -- first build can take 5-15 min)...'
-        $code = Invoke-WLCompose $composeFile 'build' 'whisper'
-    } else {
-        Write-Stage 'building whisper CPU image (no CUDA, ~1 GB)...'
-        $code = Invoke-WLCompose $composeFile 'build' 'whisper-cpu'
-    }
-    if ($code -ne 0) { Write-Err 'docker compose build whisper failed'; exit $script:WL_EXIT.WHISPER_FAILED }
+    Install-WLRuntimePython -GpuPresent $gpuPresent
+    $gpu = _ProbeAndSaveCudaWhisper $cfg $gpu
+    Save-WLRuntimeState -GpuPresent $gpuPresent | Out-Null
 
-    Write-Stage "warming model cache for $Model (downloads ~3 GB on first run)..."
-    $warmDir = Join-Path $script:WL_BASE_DIR 'warm'
-    New-Item -ItemType Directory -Force -Path $warmDir | Out-Null
-
-    try {
-        # Plain `docker run` -- compose run deadlocks at container-start on
-        # WSL2 (see Invoke-WLRun docs in _lib.ps1). Build still uses compose.
-        $code = Invoke-WLRun (@(
-            '-v', "$(ConvertTo-DockerPath $warmDir):/work",
-            $script:WL_IMG_TOOLS, 'ffmpeg', '-hide_banner', '-loglevel', 'error',
-            '-f', 'lavfi', '-i', 'anullsrc=cl=mono:r=16000', '-t', '1', '-b:a', '64k', '/work/audio.mp3'
-        )) -Name 'warmup-audio'
-        if ($code -ne 0) { throw "warm-up audio build failed (exit $code)" }
-
-        $code = Invoke-WLRun ((Get-WLWhisperRunFlags -GpuPresent $gpuPresent) + @(
-            '-e', "W_MODEL=$Model",
-            '-v', "$(ConvertTo-DockerPath $warmDir):/work",
-            '-v', "$(ConvertTo-DockerPath $cfg.models_root):/models",
-            '-v', "$(ConvertTo-DockerPath $workerDir):/app:ro",
-            (Get-WLWhisperImage -GpuPresent $gpuPresent), 'python3', '/app/whisper_run.py'
-        )) -Name 'warmup-whisper'
-        if ($code -ne 0) {
-            Write-Warn "model warm-up returned exit $code -- first /watch may pull the model on demand."
-        }
-    } catch {
-        Write-Warn "model warm-up failed: $($_.Exception.Message)"
-    } finally {
-        Remove-Item -LiteralPath $warmDir -Recurse -Force -ErrorAction SilentlyContinue
-    }
+    _WarmModel $cfg $gpu $Model
 
     Set-Content -LiteralPath $script:WL_SETUP_MARKER -Value (Get-Date -Format o) -NoNewline
     $modeLabel = if ($gpuPresent) { 'GPU mode' } else { 'CPU-only mode' }
@@ -292,15 +247,41 @@ function _Install {
 #endregion
 
 #region DetectGpuCmd
-# Standalone re-probe: `setup.ps1 -DetectGpu`. Builds the tools image first
-# if missing (the probe runs inside it), persists the result, prints JSON.
+# Standalone re-probe: `setup.ps1 -DetectGpu`. Provisions the runtime
+# binaries first if missing (the NVDEC probe needs the portable ffmpeg),
+# persists the result, prints JSON.
 function _DetectGpuCmd {
     $cfg = _EnsureConfig
-    _AssertDockerForSetup
-    if (-not (_TestImage $script:WL_IMG_TOOLS)) { _BuildToolsImage }
+    if (-not (Test-Path -LiteralPath (Get-WLFfmpegBin))) {
+        Write-Stage 'portable ffmpeg missing -- provisioning runtime binaries first...'
+        Install-WLRuntimeBinaries
+    }
     $gpu = _DetectAndSaveGpu $cfg
+    # Refresh cuda_whisper too when the venv exists (no-op otherwise).
+    if (Test-Path -LiteralPath (Get-WLWorkerPython)) {
+        $gpu = _ProbeAndSaveCudaWhisper $cfg $gpu
+    }
     $gpu | ConvertTo-Json | Write-Output
     exit 0
+}
+#endregion
+
+#region UpdateCmds
+# Re-converge the runtime to the pinned manifest (new pins after a plugin
+# update, or repair a broken tree). GPU wheel choice follows the recorded
+# detection; re-run -DetectGpu first after hardware changes.
+function _UpdateRuntimeCmd {
+    $cfg = _EnsureConfig
+    $gpu = Get-WLObjectProp $cfg 'gpu'
+    $gpuPresent = [bool](Get-WLObjectProp $gpu 'present')
+    Install-WLRuntime -GpuPresent $gpuPresent -Force | Out-Null
+    if ($null -ne $gpu) { [void](_ProbeAndSaveCudaWhisper $cfg $gpu) }
+    Write-Stage 'runtime updated.'
+    exit 0
+}
+
+function _UpdateYtDlpCmd {
+    exit (Update-WLYtDlp)
 }
 #endregion
 
@@ -401,6 +382,8 @@ function _ListJobs {
     }
     Write-Output ("jobs_root: $root")
     Write-Output ("total: {0} jobs, {1:N1} GB" -f $rows.Count, ($totalBytes / 1GB))
+    $rtSize = Get-WLRuntimeSizeGB
+    if ($rtSize) { Write-Output ("runtime: {0:N2} GB under {1}" -f $rtSize, $script:WL_RUNTIME_DIR) }
     $rows | Sort-Object AgeDays -Descending | Format-Table -AutoSize | Out-String | Write-Output
     exit 0
 }
@@ -614,6 +597,8 @@ switch ($PSCmdlet.ParameterSetName) {
     'Check'                  { _Check }
     'Json'                   { _Json }
     'DetectGpu'              { _DetectGpuCmd }
+    'UpdateRuntime'          { _UpdateRuntimeCmd }
+    'UpdateYtDlp'            { _UpdateYtDlpCmd }
     'ShowConfig'             { _ShowConfig }
     'SetJobsRoot'            { _SetJobsRoot }
     'SetStagingRoot'         { _SetStagingRoot }

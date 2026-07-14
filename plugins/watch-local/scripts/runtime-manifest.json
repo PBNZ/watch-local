@@ -1,0 +1,74 @@
+{
+  "schema": 1,
+  "comment": "Pinned portable-runtime versions. All URLs are immutable versioned release assets; sha256 verified on 2026-07-14 (Phase 0 spike box). Update pins + hashes together, then setup.ps1 -UpdateRuntime.",
+  "python": "3.12",
+  "pip": {
+    "common": [
+      "faster-whisper==1.2.1",
+      "ctranslate2==4.8.1"
+    ],
+    "gpu": [
+      "nvidia-cublas-cu12==12.9.2.10",
+      "nvidia-cudnn-cu12==9.24.0.43"
+    ]
+  },
+  "binaries": {
+    "uv": {
+      "version": "0.11.28",
+      "find": ["uv"],
+      "win_x64": {
+        "files": [{ "url": "https://github.com/astral-sh/uv/releases/download/0.11.28/uv-x86_64-pc-windows-msvc.zip", "sha256": "0a23463216d09c6a72ff80ef5dc5a795f07dc1575cb84d24596c2f124a441b7b" }]
+      },
+      "linux_x64": {
+        "files": [{ "url": "https://github.com/astral-sh/uv/releases/download/0.11.28/uv-x86_64-unknown-linux-gnu.tar.gz", "sha256": "e490a6464492183c5d4534a5527fb4440f7f2bb2f228162ad7e4afe076dc0224" }]
+      },
+      "macos_arm64": {
+        "files": [{ "url": "https://github.com/astral-sh/uv/releases/download/0.11.28/uv-aarch64-apple-darwin.tar.gz", "sha256": "33540eb7c883ab857eff79bd5ac2aa31fe27b595abecb4a9c003a2c998447232" }]
+      }
+    },
+    "ytdlp": {
+      "version": "2026.07.04",
+      "find": ["yt-dlp"],
+      "win_x64": {
+        "files": [{ "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.07.04/yt-dlp.exe", "sha256": "52fe3c26dcf71fbdc85b528589020bb0b8e383155cfa81b64dd447bbe35e24b8", "raw_name": "yt-dlp.exe" }]
+      },
+      "linux_x64": {
+        "files": [{ "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.07.04/yt-dlp_linux", "sha256": "6bbb3d314cde4febe36e5fa1d55462e29c974f63444e707871834f6d8cc210ae", "raw_name": "yt-dlp" }]
+      },
+      "macos_arm64": {
+        "files": [{ "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.07.04/yt-dlp_macos", "sha256": "498bd0dae17855c599d371d68ec5bafc439a9d8640e838be25c765a9792f261b", "raw_name": "yt-dlp" }]
+      }
+    },
+    "deno": {
+      "version": "2.9.2",
+      "find": ["deno"],
+      "win_x64": {
+        "files": [{ "url": "https://github.com/denoland/deno/releases/download/v2.9.2/deno-x86_64-pc-windows-msvc.zip", "sha256": "5fe194d26ac5ef77fcc5288c2c438c7a0465f3b6180440ebf04092714bf2dcdf" }]
+      },
+      "linux_x64": {
+        "files": [{ "url": "https://github.com/denoland/deno/releases/download/v2.9.2/deno-x86_64-unknown-linux-gnu.zip", "sha256": "934d1bd5cb09eaed7f2e4a4fc58208d04a3c5c0fcde9f319d93d735265c67a4a" }]
+      },
+      "macos_arm64": {
+        "files": [{ "url": "https://github.com/denoland/deno/releases/download/v2.9.2/deno-aarch64-apple-darwin.zip", "sha256": "687ae485168ba73a4f1ee3a954eb4f077eca82f2fefd236a6a83a3889287876c" }]
+      }
+    },
+    "ffmpeg": {
+      "version": "8.1.2",
+      "find": ["ffmpeg", "ffprobe"],
+      "subdir": "ffmpeg/bin",
+      "win_x64": {
+        "files": [{ "url": "https://github.com/GyanD/codexffmpeg/releases/download/8.1.2/ffmpeg-8.1.2-essentials_build.zip", "sha256": "db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec" }]
+      },
+      "linux_x64": {
+        "files": [{ "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-13-14-11/ffmpeg-n8.1.2-22-g94138f6973-linux64-gpl-8.1.tar.xz", "sha256": "08cf3fb886e077ce05494d5bba6ca060336b1477ec8496ca4637e87c441cc95a" }]
+      },
+      "macos_arm64": {
+        "comment": "evermeet builds are x86_64; run under Rosetta 2 on Apple Silicon",
+        "files": [
+          { "url": "https://evermeet.cx/ffmpeg/ffmpeg-8.1.2.zip", "sha256": "e91df72a1ee7c26606f90dd2dd4dcccc6a75140ff9ea6fdd50faae828b82ba69" },
+          { "url": "https://evermeet.cx/ffmpeg/ffprobe-8.1.2.zip", "sha256": "399b93f0b9862f69767afa343e90c2f48d7e7958cadbb6deb76a012d0e3b7ce3" }
+        ]
+      }
+    }
+  }
+}

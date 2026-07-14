@@ -212,13 +212,13 @@ Write-Output ""
 Write-Output "# /watch:save-here -- promoted"
 Write-Output ""
 Write-Output "- **Slug:** $Slug"
-Write-Output "- **Destination:** ``$(ConvertTo-DockerPath $destDir)``"
+Write-Output "- **Destination:** ``$(ConvertTo-WLSlashPath $destDir)``"
 Write-Output "- **Mode:** $(if ($MoveOnSave) { 'move' } else { 'copy' })"
 if (-not $wasUrl) {
-    Write-Output "- **Source link:** ``$(ConvertTo-DockerPath (Join-Path $destDir 'source-link.txt'))``"
+    Write-Output "- **Source link:** ``$(ConvertTo-WLSlashPath (Join-Path $destDir 'source-link.txt'))``"
     if ($IncludeSource) { Write-Output "- **Source copied:** yes (`-IncludeSource`)" }
 }
 Write-Output ""
-Write-Output "Use the files in ``$(ConvertTo-DockerPath $destDir)`` going forward. The canonical copy under jobs_root is $(if ($MoveOnSave -or $RemoveCanonical) { 'GONE' } else { 'still present until you purge it' })."
+Write-Output "Use the files in ``$(ConvertTo-WLSlashPath $destDir)`` going forward. The canonical copy under jobs_root is $(if ($MoveOnSave -or $RemoveCanonical) { 'GONE' } else { 'still present until you purge it' })."
 
 exit $script:WL_EXIT.OK

@@ -10,7 +10,7 @@
     -- this extracts those exact timestamps at native resolution (or a width
     you choose) from the job's downloaded source.
 
-    Backed by worker/stills.py running in the tools image via `docker run`.
+    Backed by worker/stills.py running natively on the portable runtime.
 
 .PARAMETER Slug
     Job slug (folder under jobs_root). Default "last" -> read from
@@ -46,7 +46,6 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\_lib.ps1"
 if ($VerboseLog) { Enable-VerboseLog }
 
-$workerDir = Join-Path $PSScriptRoot 'worker'
 $config    = Get-WLConfig
 $jobsRoot  = [string]$config.jobs_root
 #endregion
@@ -84,9 +83,8 @@ if (Test-Path -LiteralPath $dlDir) {
              Select-Object -First 1
 }
 
-$inputMountHost = $null
 if ($video) {
-    $containerVideo = "/work/download/$($video.Name)"
+    $srcVideo = $video.FullName
 } else {
     # Local/UNC job: no video under download/. Recover the original source
     # path from the job's own job.json (written by watch.ps1), falling back
@@ -102,18 +100,11 @@ if ($video) {
             if ([string]$last.slug -eq $Slug) { $origPath = [string]$last.original_path }
         } catch { }
     }
-    if ($origPath -and $origPath.StartsWith('\\')) {
-        Write-Err "this job's source is a UNC share ($origPath), which docker cannot"
-        Write-Err "mount directly and whose staged copy is gone. Re-run /watch on the UNC"
-        Write-Err "path with -Screenshots `"MM:SS,...`" (stills during the run), or with"
-        Write-Err "-SaveHere -IncludeSource to keep a local copy for later grabs."
-        exit $script:WL_EXIT.SOURCE_BAD
-    }
+    # UNC sources work directly now: ffmpeg runs natively on the host and
+    # reads \\server\share paths itself, so no staged copy is needed.
     if ($origPath -and (Test-Path -LiteralPath $origPath)) {
-        $item = Get-Item -LiteralPath $origPath
-        $inputMountHost = $item.Directory.FullName
-        $containerVideo = "/input/$($item.Name)"
-        Write-Stage "local-source job: mounting original file read-only ($origPath)"
+        $srcVideo = $origPath
+        Write-Stage "reading original source directly ($origPath)"
     } else {
         if ($origPath) {
             Write-Err "this job's original source is no longer at $origPath."
@@ -129,11 +120,11 @@ if ($video) {
 #endregion
 
 #region Extract
-Assert-DockerReady
+Assert-WLRuntimeReady
 
-# NVDEC decode when the detected GPU supports it (same flags as /watch).
+# NVDEC decode when the detected GPU supports it (same env as /watch).
 $gpuInfo = Get-WLGpuInfo -Config $config
-$toolsGpuFlags = Get-WLToolsGpuFlags -Gpu $gpuInfo
+$toolsGpuEnv = Get-WLToolsWorkerEnv -Gpu $gpuInfo
 
 $shotsDir = Join-Path $jobDir 'screenshots'
 New-Item -ItemType Directory -Force -Path $shotsDir | Out-Null
@@ -141,19 +132,14 @@ New-Item -ItemType Directory -Force -Path $shotsDir | Out-Null
 $resLabel = if ($Resolution -gt 0) { "$Resolution px wide" } else { 'native resolution' }
 Write-Stage "extracting stills at $resLabel for: $Screenshots"
 
-$runArgs = $toolsGpuFlags + @(
-    '-e', "W_VIDEO=$containerVideo",
-    '-e', "W_SHOTS=$Screenshots",
-    '-e', 'W_OUT_DIR=/work/screenshots',
-    '-e', "W_STILL_RES=$Resolution",
-    '-v', "$(ConvertTo-DockerPath $jobDir):/work",
-    '-v', "$(ConvertTo-DockerPath $workerDir):/app:ro"
-)
-if ($inputMountHost) {
-    $runArgs += @('-v', "$(ConvertTo-DockerPath $inputMountHost):/input:ro")
+$stillEnv = $toolsGpuEnv + @{
+    W_WORK_DIR  = $jobDir
+    W_VIDEO     = $srcVideo
+    W_SHOTS     = $Screenshots
+    W_OUT_DIR   = $shotsDir
+    W_STILL_RES = $Resolution
 }
-$runArgs += @($script:WL_IMG_TOOLS, 'python3', '/app/stills.py')
-$code = Invoke-WLRun $runArgs -Name 'grab-frames'
+$code = Invoke-WLWorker -Script 'stills.py' -EnvVars $stillEnv -Name 'grab-frames'
 if ($code -ne 0) {
     Write-Err "still extraction failed (exit $code)."
     exit $script:WL_EXIT.TOOLS_FAILED
@@ -189,11 +175,11 @@ Write-Output "- **Count:** $($produced.Count)"
 Write-Output ""
 Write-Output "Stills (Read these paths to view):"
 foreach ($f in $produced) {
-    Write-Output "- ``$(ConvertTo-DockerPath $f.FullName)``"
+    Write-Output "- ``$(ConvertTo-WLSlashPath $f.FullName)``"
 }
 if ($copied.Count -gt 0) {
     Write-Output ""
-    Write-Output "Also copied to ``$(ConvertTo-DockerPath $OutDir)``."
+    Write-Output "Also copied to ``$(ConvertTo-WLSlashPath $OutDir)``."
 }
 #endregion
 

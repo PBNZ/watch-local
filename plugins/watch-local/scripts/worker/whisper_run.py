@@ -22,7 +22,8 @@ import sys
 from pathlib import Path
 
 
-WORK = Path("/work")
+# Host job dir when run natively (W_WORK_DIR); /work inside a container.
+WORK = Path(os.environ.get("W_WORK_DIR", "/work"))
 AUDIO = WORK / "audio.mp3"
 OUT = WORK / "transcript_whisper.json"
 
@@ -77,6 +78,8 @@ def main() -> int:
     device = _env("W_DEVICE", "cuda")
     compute_type = _env("W_COMPUTE", "float16")
 
+    import cuda_paths
+    cuda_paths.add_cuda_dll_dirs()
     from faster_whisper import WhisperModel  # type: ignore
 
     print(f"[whisper] loading {model_name} on {device}/{compute_type}", file=sys.stderr, flush=True)

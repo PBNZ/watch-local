@@ -6,24 +6,26 @@
 # Contents (region jump list -- keep labels short for VS Code minimap):
 #   #region Globals      module-wide constants, exit codes, ASCII tokens
 #   #region Logging      Write-Stage / Write-Detail / Write-Warn / Write-Err
-#   #region Paths        slugs, ToDockerPath, ContainerToHost, AssertInsideRoot
+#   #region Paths        slugs, slash-path display form, AssertInsideRoot
 #   #region Config       load/save config.json with path validation
 #   #region Disk         drive free-space helpers
-#   #region Docker       wrappers around docker / docker compose with try/catch
+#   #region Gpu          gpu-block parsing + per-run resolution
 #   #region Time         Format-Time / Parse-Time mirror frames.py
 #   #region Confirm      preview + token confirmation for destructive ops
 #   #region Misc         file hashing, random tokens, encoding-safe Read
+#
+# _runtime.ps1 (dot-sourced at the end) adds runtime provisioning, native
+# worker invocation, and the native GPU probes.
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 # PS 7.4+ default for $PSNativeCommandUseErrorActionPreference is $true,
-# which turns native command stderr (e.g. `docker compose run` progress
-# lines like "Container ... Creating") into a terminating RemoteException
-# under $ErrorActionPreference = 'Stop'. Every native call in these
-# scripts is guarded by an explicit $LASTEXITCODE check, so we want the
-# pre-PS7.4 behaviour where stderr is informational and the exit code is
-# the truth. Toggle is a no-op on PS < 7.4.
+# which turns native command stderr (e.g. ffmpeg banners, yt-dlp progress)
+# into a terminating RemoteException under $ErrorActionPreference = 'Stop'.
+# Every native call in these scripts is guarded by an explicit
+# $LASTEXITCODE check, so we want the pre-PS7.4 behaviour where stderr is
+# informational and the exit code is the truth. No-op on PS < 7.4.
 if ($PSVersionTable.PSVersion.Major -ge 7) {
     $PSNativeCommandUseErrorActionPreference = $false
 }
@@ -39,8 +41,8 @@ if (-not (Get-Variable -Name WL_VERBOSE -Scope Script -ErrorAction SilentlyConti
 # Exit codes -- see PLAN-v2 section B6.
 $script:WL_EXIT = [ordered]@{
     OK                 = 0
-    DOCKER_MISSING     = 10
-    DOCKER_DOWN        = 11
+    RUNTIME_MISSING    = 10   # runtime not provisioned (was DOCKER_MISSING)
+    RUNTIME_BROKEN     = 11   # runtime provisioned but incomplete (was DOCKER_DOWN)
     GPU_MISSING        = 12
     SOURCE_BAD         = 20
     UNC_COPY_FAILED    = 21
@@ -53,17 +55,6 @@ $script:WL_EXIT = [ordered]@{
     NO_DISK            = 50
     PURGE_REFUSED      = 60
 }
-
-# Image tags. The whisper image has a CUDA and a CPU variant; which one a
-# machine builds/runs is decided by GPU detection (config.json `gpu` block).
-$script:WL_IMG_TOOLS       = 'watch-local/tools:1'
-$script:WL_IMG_WHISPER     = 'watch-local/whisper:cu128'
-$script:WL_IMG_WHISPER_CPU = 'watch-local/whisper:cpu'
-
-# NVIDIA container runtime capability set for the tools container. `video`
-# is what injects libnvcuvid (NVDEC) -- the default 'compute,utility' set
-# does NOT include it, so ffmpeg's cuvid decoders would fail to load.
-$script:WL_GPU_CAPS_ENV = 'NVIDIA_DRIVER_CAPABILITIES=compute,video,utility'
 
 # Hard ceilings -- mirror worker/frames.py.
 $script:WL_MAX_FPS     = 2.0
@@ -152,27 +143,10 @@ function New-JobSlug([string]$source) {
     return -join ($hash | Select-Object -First 8 | ForEach-Object { $_.ToString('x2') })
 }
 
-# Convert a Windows path to the forward-slash form Docker Desktop accepts.
-function ConvertTo-DockerPath([string]$winPath) {
+# Normalize a Windows path to forward slashes -- used for display in
+# reports (stable, copy-pasteable form on every host OS).
+function ConvertTo-WLSlashPath([string]$winPath) {
     return ($winPath -replace '\\', '/')
-}
-
-# Translate a container path (e.g. /work/frames/foo.jpg) back to a host
-# path. Caller provides the host base for /work and (optionally) /input.
-function ConvertTo-HostPath {
-    param(
-        [Parameter(Mandatory)][AllowEmptyString()][AllowNull()][string]$ContainerPath,
-        [Parameter(Mandatory)][string]$WorkHost,
-        [string]$InputHost = $null
-    )
-    if ([string]::IsNullOrEmpty($ContainerPath)) { return $null }
-    if ($ContainerPath.StartsWith('/work/')) {
-        return ConvertTo-DockerPath (Join-Path $WorkHost ($ContainerPath.Substring(6)))
-    }
-    if ($ContainerPath.StartsWith('/input/') -and $InputHost) {
-        return ConvertTo-DockerPath (Join-Path $InputHost ($ContainerPath.Substring(7)))
-    }
-    return ConvertTo-DockerPath $ContainerPath
 }
 
 # Scope invariant. Resolve $Target and confirm it is a strict descendant
@@ -284,107 +258,6 @@ function Get-DriveFreeGB([string]$path) {
 
 #endregion
 
-#region Docker
-
-# Confirm docker CLI present + daemon responsive. Returns nothing on
-# success; calls exit with WL_EXIT.DOCKER_* on failure.
-function Assert-DockerReady {
-    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
-        Write-Err 'docker CLI not on PATH. Install Docker Desktop from https://www.docker.com/products/docker-desktop/'
-        exit $script:WL_EXIT.DOCKER_MISSING
-    }
-    try {
-        & docker info --format '{{.ServerVersion}}' 2>$null | Out-Null
-    } catch {
-        Write-Err "docker command failed: $($_.Exception.Message)"
-        exit $script:WL_EXIT.DOCKER_DOWN
-    }
-    if ($LASTEXITCODE -ne 0) {
-        Write-Err 'Docker Desktop daemon not responding. Start Docker Desktop and re-run.'
-        exit $script:WL_EXIT.DOCKER_DOWN
-    }
-}
-
-# Run docker with the given flat string-array arg list. Lowers
-# $ErrorActionPreference to Continue for the duration of the call so
-# native stderr (docker compose progress lines, ffmpeg banner) doesn't
-# terminate the caller under PS 7's StrictMode+Stop combo. Pipes output
-# through Out-Host so the function's pipeline carries ONLY the exit code
-# -- a bare `return $LASTEXITCODE` would otherwise interleave docker
-# stdout in the caller's `$code`.
-#
-# Native stderr lines arrive on the merged pipeline as ErrorRecords, which
-# PS 5.1 renders as red "RemoteException" blocks (pure noise for worker
-# progress lines). Unwrap them to plain text on the real stderr stream --
-# progress stays live, nothing is swallowed, and the exit code stays the
-# single source of truth for failure.
-#
-# NOTE: ArgList is a plain [string[]] (NOT ValueFromRemainingArguments).
-# Callers MUST pass a flat array, e.g. `-ArgList @('compose','-f',$f,'build','tools')`.
-function Invoke-WLDocker {
-    param([Parameter(Mandatory, Position=0)][string[]]$ArgList)
-    $orig = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    Write-Detail "docker $($ArgList -join ' ')"
-    try {
-        & docker @ArgList 2>&1 | ForEach-Object {
-            if ($_ -is [System.Management.Automation.ErrorRecord]) {
-                [Console]::Error.WriteLine($_.Exception.Message)
-            } else {
-                $_ | Out-Host
-            }
-        }
-        return $LASTEXITCODE
-    } finally {
-        $ErrorActionPreference = $orig
-    }
-}
-
-# Convenience: docker compose -f <file> <rest...>
-# ComposeArgs uses ValueFromRemainingArguments so callers can pass
-# positional args (or splat with @VarName) without wrapping in @( ).
-# NOTE: use this ONLY for `docker compose build`. Per-call worker
-# invocations must use Invoke-WLRun (plain `docker run`) -- see below.
-function Invoke-WLCompose {
-    param(
-        [Parameter(Mandatory, Position=0)][string]$ComposeFile,
-        [Parameter(ValueFromRemainingArguments=$true)][string[]]$ComposeArgs
-    )
-    $flat = @('compose', '-f', $ComposeFile) + $ComposeArgs
-    Invoke-WLDocker -ArgList $flat
-}
-
-# Run a one-off worker container with `docker run --rm`.
-#
-# WHY NOT `docker compose run`: on the Docker Desktop WSL2 backend,
-# `docker compose run` intermittently DEADLOCKS at container-start -- the
-# container is created but never transitions to Running, wedged in
-# `Created` state, and even `docker rm -f` cannot clear it without a
-# Docker Desktop restart. This is the documented v0.2.0 blocker; it
-# reproduces on real workloads (download/whisper) even when a trivial
-# `compose run echo hi` succeeds. Plain `docker run` does not create a
-# per-project compose network and does not exhibit the hang. (The GPU
-# preflight has always used `docker run --gpus all` and never hung --
-# corroborating evidence.) `docker compose build` is a separate code
-# path and is unaffected, so image builds still go through Invoke-WLCompose.
-#
-# $RunArgs is the full arg list AFTER `run --rm`: env (-e ...), mounts
-# (-v ...), GPU flags, the IMAGE TAG (not a compose service name), and the
-# command. Returns the exit code; stdout streams via Out-Host like
-# Invoke-WLDocker.
-function Invoke-WLRun {
-    param(
-        [Parameter(Mandatory, Position=0)][string[]]$RunArgs,
-        [string]$Name = 'worker'
-    )
-    # Meaningful container names in Docker Desktop (instead of random ones);
-    # random suffix so concurrent runs of the same stage never collide.
-    $cname = 'watch-local-{0}-{1}' -f $Name, (Get-Random -Maximum 99999)
-    Invoke-WLDocker -ArgList (@('run', '--rm', '--name', $cname) + $RunArgs)
-}
-
-#endregion
-
 #region Gpu
 
 # StrictMode-safe property access for hashtables AND deserialized JSON
@@ -432,86 +305,38 @@ function ConvertFrom-WLGpuProbe {
     }
 }
 
-# Probe the GPU through docker -- the only visibility that matters, since
-# all work runs in containers. Two container runs against the tools image
-# (call only after it is built; a missing image reads as "no GPU"):
-#   1. nvidia-smi (injected by the NVIDIA runtime) -> presence + identity.
-#   2. generate a 1s h264 clip and decode it with the explicit cuvid
-#      decoder -> NVDEC works end-to-end (hard-fails when it doesn't;
-#      verified against libnvcuvid missing / GPU absent).
-# Returns the gpu object; never throws.
-function Test-WLGpu {
-    param([string]$Image = $script:WL_IMG_TOOLS)
-    $orig = $ErrorActionPreference
-    try {
-        $ErrorActionPreference = 'Continue'
-        # Capture ALL lines, then take the first. Piping a native command
-        # into `Select-Object -First 1` stops the pipeline after one object,
-        # which terminates docker mid-stream and leaves $LASTEXITCODE = -1 --
-        # making a working GPU read as absent.
-        $out = @(& docker run --rm --name "watch-local-gpuprobe-$(Get-Random -Maximum 99999)" `
-            --gpus all -e $script:WL_GPU_CAPS_ENV $Image `
-            nvidia-smi --query-gpu=name,driver_version,memory.total,compute_cap --format=csv,noheader 2>$null)
-        if ($LASTEXITCODE -ne 0 -or $out.Count -eq 0) {
-            return (ConvertFrom-WLGpuProbe -CsvLine '' -Nvdec $false)
-        }
-        $csv = [string]$out[0]
-        & docker run --rm --name "watch-local-nvdecprobe-$(Get-Random -Maximum 99999)" `
-            --gpus all -e $script:WL_GPU_CAPS_ENV $Image sh -c `
-            'ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc2=size=320x240:rate=30 -t 1 -c:v libx264 -pix_fmt yuv420p /tmp/probe.mp4 && ffmpeg -hide_banner -loglevel error -y -c:v h264_cuvid -i /tmp/probe.mp4 -f null -' 2>$null | Out-Null
-        $nvdec = ($LASTEXITCODE -eq 0)
-        return (ConvertFrom-WLGpuProbe -CsvLine ([string]$csv) -Nvdec $nvdec)
-    } catch {
-        return (ConvertFrom-WLGpuProbe -CsvLine '' -Nvdec $false)
-    } finally {
-        $ErrorActionPreference = $orig
-    }
-}
-
-# docker run flags for the tools/stills containers. Only when the detected
-# GPU has working NVDEC: GPU access + video capability + the env that makes
-# frames.py insert `-hwaccel cuda`. Otherwise empty (pure CPU decode).
-function Get-WLToolsGpuFlags {
-    param($Gpu)
-    $present = Get-WLObjectProp $Gpu 'present'
-    $nvdec   = Get-WLObjectProp $Gpu 'nvdec'
-    if (-not $present -or -not $nvdec) { return @() }
-    return @('--gpus', 'all', '-e', $script:WL_GPU_CAPS_ENV, '-e', 'W_HWACCEL=cuda')
-}
-
-# Whisper image + docker run flags per mode. CPU mode: no GPU request,
-# ctranslate2 on cpu/int8 (the documented faster-whisper CPU config).
-function Get-WLWhisperImage {
-    param([Parameter(Mandatory)][bool]$GpuPresent)
-    if ($GpuPresent) { return $script:WL_IMG_WHISPER }
-    return $script:WL_IMG_WHISPER_CPU
-}
-
-function Get-WLWhisperRunFlags {
-    param([Parameter(Mandatory)][bool]$GpuPresent)
-    if ($GpuPresent) {
-        return @(
-            '--gpus', 'all',
-            '-e', 'NVIDIA_VISIBLE_DEVICES=all',
-            '-e', 'HF_HOME=/models/hf-cache'
-        )
-    }
-    return @(
-        '-e', 'HF_HOME=/models/hf-cache',
-        '-e', 'W_DEVICE=cpu',
-        '-e', 'W_COMPUTE=int8'
-    )
+# Attach the cuda_whisper field (venv-level CUDA availability) to a gpu
+# object regardless of hashtable/PSCustomObject shape.
+function Set-WLGpuCudaWhisper {
+    param([Parameter(Mandatory)]$Gpu, [Parameter(Mandatory)][bool]$Value)
+    if ($Gpu -is [System.Collections.IDictionary]) { $Gpu['cuda_whisper'] = $Value }
+    else { $Gpu | Add-Member -NotePropertyName 'cuda_whisper' -NotePropertyValue $Value -Force }
+    return $Gpu
 }
 
 # Resolve the effective gpu object for a run: use the config block when
-# detection has already run; otherwise (pre-upgrade config) probe once and
-# persist, so older installs migrate on their first /watch.
+# detection has already run; otherwise probe once and persist, so older
+# installs migrate on their first /watch. Docker-era blocks lack
+# cuda_whisper -- probe it once too, or a GPU box would silently run
+# whisper on CPU after upgrading.
 function Get-WLGpuInfo {
     param([Parameter(Mandatory)][hashtable]$Config)
     $gpu = Get-WLObjectProp $Config 'gpu'
-    if ($null -ne $gpu -and $null -ne (Get-WLObjectProp $gpu 'present')) { return $gpu }
-    Write-Stage 'no GPU detection on record -- probing once (10-30s)...'
-    $gpu = Test-WLGpu
+    if ($null -ne $gpu -and $null -ne (Get-WLObjectProp $gpu 'present')) {
+        if ($null -eq (Get-WLObjectProp $gpu 'cuda_whisper')) {
+            $cw = if ([bool](Get-WLObjectProp $gpu 'present')) { Test-WLCudaWhisper } else { $false }
+            $gpu = Set-WLGpuCudaWhisper -Gpu $gpu -Value $cw
+            $Config.gpu = $gpu
+            try { Save-WLConfig $Config } catch {
+                Write-Detail "could not persist gpu migration: $($_.Exception.Message)"
+            }
+        }
+        return $gpu
+    }
+    Write-Stage 'no GPU detection on record -- probing once...'
+    $gpu = Test-WLGpuNative
+    $cw = if ([bool](Get-WLObjectProp $gpu 'present')) { Test-WLCudaWhisper } else { $false }
+    $gpu = Set-WLGpuCudaWhisper -Gpu $gpu -Value $cw
     $Config.gpu = $gpu
     try { Save-WLConfig $Config } catch {
         Write-Detail "could not persist gpu detection: $($_.Exception.Message)"
@@ -639,3 +464,6 @@ function Get-WLPSEngine {
 }
 
 #endregion
+
+# Portable native runtime (provisioning, worker invocation, GPU probes).
+. "$PSScriptRoot\_runtime.ps1"

@@ -6,23 +6,57 @@
 |---|---|---|---|
 | Python unit | pytest | `worker/frames.py`, `worker/captions.py`, `worker/compare.py` | <1 s |
 | PowerShell unit | Pester 5 | `_lib.ps1` helpers + scope-invariant + purge-confirm gates | ~10 s |
-| Integration | Pester 5 + docker | tools + whisper + compare against a synthesized tiny mp4 | ~30 s |
-| Smoke | Pester 5 + docker + GPU + internet | real `/watch` vs a public URL | ~60 s |
+| Integration | Pester 5 + provisioned runtime | tools + whisper + compare against a synthesized tiny mp4 | ~30 s |
+| Smoke | Pester 5 + provisioned runtime + internet | real `/watch` vs a public URL | ~60 s |
 
 ## Requirements
 
 - Python 3.11+ with `pytest` installed.
 - PowerShell 5.1+ with Pester 5+ (`Install-Module Pester -Force -SkipPublisherCheck`).
-- Docker Desktop running with GPU access (for integration + smoke).
-- The watch-local images built (run `/watch-setup` first).
+- The portable runtime provisioned (run `/watch-setup` first) for
+  integration + smoke.
+
+## Engine coverage (PowerShell 5.1 vs 7)
+
+The suite runs on whichever engine invokes it, and child-process tests
+(Purge, GrabFrames, the Assert-InsideRoot subshell, smoke) spawn the SAME
+engine -- so one invocation covers one engine end to end:
+
+```powershell
+powershell -File tests\run-tests.ps1 -Unit   # Windows PowerShell 5.1
+pwsh -File tests\run-tests.ps1 -Unit         # PowerShell 7 (also the Linux/macOS engine)
+```
+
+CI runs the unit layer on **both** engines (windows-latest matrix in
+`validate.yml`). Run both locally before a release when launcher scripts
+changed.
+
+## Linux runs from a Windows build machine (Docker)
+
+`tests/linux/` holds a dev-only container harness (the plugin itself needs
+no Docker -- this is build-machine tooling). It runs the suite under pwsh
+on Ubuntu, including REAL `linux_x64` runtime provisioning from the pinned
+manifest:
+
+```powershell
+pwsh -File tests/linux/run-linux-tests.ps1                        # unit only
+pwsh -File tests/linux/run-linux-tests.ps1 -Integration           # + provisions the linux runtime
+pwsh -File tests/linux/run-linux-tests.ps1 -Integration -Smoke -FreshState   # full cold-install run
+```
+
+Runtime + model persist in the `watch-local-linux-state` docker volume;
+`-FreshState` deletes it first for a true cold install. The harness
+auto-falls back to `--dns 8.8.8.8` when Docker Desktop's container DNS is
+broken. Note: Pester is pinned to the 5.x line everywhere -- 6.0.0 fails
+to import on Linux pwsh.
 
 ## Run everything
 
 ```powershell
-# unit only (fast, no docker required):
+# unit only (fast, no runtime required):
 powershell -File tests\run-tests.ps1 -Unit
 
-# unit + integration (requires images):
+# unit + integration (requires provisioned runtime):
 powershell -File tests\run-tests.ps1 -Unit -Integration
 
 # everything including a real /watch run:

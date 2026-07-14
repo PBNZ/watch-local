@@ -62,7 +62,7 @@ def format_time(seconds: float) -> str:
 
 def get_metadata(video_path: str) -> dict:
     if shutil.which("ffprobe") is None:
-        raise SystemExit("ffprobe is not installed in this container")
+        raise SystemExit("ffprobe not found on worker PATH")
 
     result = subprocess.run(
         [
@@ -141,7 +141,7 @@ def extract(
     end_seconds=None,
 ):
     if shutil.which("ffmpeg") is None:
-        raise SystemExit("ffmpeg is not installed in this container")
+        raise SystemExit("ffmpeg not found on worker PATH")
 
     out_dir.mkdir(parents=True, exist_ok=True)
     for existing in out_dir.glob("frame_*.jpg"):
@@ -191,7 +191,7 @@ def extract_stills(video_path, out_dir, timestamps, resolution=None, prefix="sho
     skipping any timestamp ffmpeg failed to render.
     """
     if shutil.which("ffmpeg") is None:
-        raise SystemExit("ffmpeg is not installed in this container")
+        raise SystemExit("ffmpeg not found on worker PATH")
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 

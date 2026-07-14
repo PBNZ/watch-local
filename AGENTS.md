@@ -10,6 +10,8 @@
   `repo-standard` skill: `standard/living-docs.md` and `standard/doc-style.md`.
   (This repo has no runbook yet; the rule applies if one is added.)
 - **Plugin code lives under `plugins/watch-local/`**; its user-facing contract is
-  `plugins/watch-local/SKILL.md`. Tests: `tests/run-tests.ps1` (pytest + Pester; -Integration
-  and -Smoke layers need Docker). CI: `.github/workflows/validate.yml` (strict plugin
+  `plugins/watch-local/SKILL.md`. Tests: `tests/run-tests.ps1` (pytest + Pester; run under BOTH
+  powershell.exe and pwsh when launcher scripts change -- child spawns follow the invoking
+  engine; -Integration and -Smoke layers need the provisioned portable runtime).
+  CI: `.github/workflows/validate.yml` (strict plugin
   validation + Python validators) and `.github/workflows/docs.yml` (living-docs check).

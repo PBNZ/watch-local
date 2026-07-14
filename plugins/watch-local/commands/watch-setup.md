@@ -1,5 +1,5 @@
 ---
-description: One-time interactive setup for /watch-local. Verifies Docker, detects your NVIDIA GPU (or configures CPU-only mode), picks storage locations, builds container images, downloads the whisper model, and runs a smoke test.
+description: One-time interactive setup for /watch-local. Downloads the portable runtime (yt-dlp, ffmpeg, deno, Python -- no Docker, no admin), detects your NVIDIA GPU (or configures CPU-only mode), picks storage locations, downloads the whisper model, and runs a smoke test.
 argument-hint: "[-Model name] [-Yes]"
 allowed-tools: [Bash, AskUserQuestion]
 ---
@@ -12,6 +12,12 @@ Command:
 powershell.exe -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/onboarding.ps1" $ARGUMENTS
 ```
 
-If the user has previously completed setup, re-running is safe: the wizard re-runs the image build and model warm-up, but Docker's layer cache and the cached model make those near-instant (it re-verifies rather than explicitly skipping). Tell the user upfront that the slow steps ON FIRST RUN are: whisper image build (~5-15 min) and whisper model download (~3 GB for large-v3, the default). Pause for confirmation before kicking those off if the user appears time-constrained.
+(On Linux/macOS use `pwsh` instead of `powershell.exe -ExecutionPolicy Bypass`.
+PowerShell 7 is NOT preinstalled there -- if `pwsh` is not on PATH, stop and
+tell the user to install it first: macOS `brew install powershell`; Linux via
+the Microsoft package repo or `sudo snap install powershell --classic`; all
+methods at https://learn.microsoft.com/powershell/scripting/install/installing-powershell.)
+
+If the user has previously completed setup, re-running is safe: already-downloaded tools and the cached model are re-verified rather than re-fetched. Tell the user upfront what downloads ON FIRST RUN: portable tools (~190 MB), the whisper Python stack (~100 MB CPU / ~1.5 GB with CUDA libraries on GPU machines), and the whisper model (~3 GB for large-v3, the default). Pause for confirmation before kicking those off if the user appears time-constrained.
 
 The wizard prompts on stdin, which does not work from a non-interactive shell (including your own shell tool -- it exits 2 with guidance rather than hanging). In that case pass defaults up front instead: `-Yes` accepts every default, plus optional `-Model <name>` / `-SkipSmoke`. For a status probe only, use `scripts/setup.ps1 -Check`.

@@ -1,8 +1,8 @@
 {
   "name": "watch-local",
   "metadata": {
-    "description": "Give Claude a video input -- fully local. /watch downloads, extracts frames, and transcribes via Docker -- on your NVIDIA GPU when one is detected, on CPU otherwise. No cloud APIs.",
-    "version": "0.4.0-rc.1"
+    "description": "Give Claude a video input -- fully local. /watch downloads, extracts frames, and transcribes on a self-provisioned portable runtime (no Docker) -- on your NVIDIA GPU when one is detected, on CPU otherwise. No cloud APIs.",
+    "version": "0.5.0-rc.1"
   },
   "owner": {
     "name": "Peter"
@@ -14,7 +14,7 @@
       "author": { "name": "Peter (port of bradautomates/claude-video)" },
       "source": "./plugins/watch-local",
       "category": "productivity",
-      "keywords": ["video", "watch", "youtube", "local", "gpu", "cpu", "cuda", "nvdec", "whisper", "faster-whisper", "yt-dlp", "ffmpeg", "docker", "multimodal", "frames", "windows", "linux"]
+      "keywords": ["video", "watch", "youtube", "local", "gpu", "cpu", "cuda", "nvdec", "whisper", "faster-whisper", "yt-dlp", "ffmpeg", "portable", "multimodal", "frames", "windows", "linux"]
     }
   ]
 }

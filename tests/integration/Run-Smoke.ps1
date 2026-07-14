@@ -21,12 +21,15 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$watch = Join-Path $PluginRoot 'scripts\watch.ps1'
+$watch = Join-Path $PluginRoot 'scripts/watch.ps1'
 $tmp = Join-Path $env:TEMP ('wl-smoke-' + [Guid]::NewGuid().ToString('N').Substring(0,8))
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 
 try {
-    $output = & powershell.exe -ExecutionPolicy Bypass -File $watch `
+    # Same engine as the runner: powershell.exe when invoked from 5.1, pwsh
+    # when invoked from PowerShell 7 (and on Linux/macOS).
+    $engine = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh' } else { 'powershell.exe' }
+    $output = & $engine -ExecutionPolicy Bypass -File $watch `
         -Source $Url -MaxFrames 4 -Model tiny -NoCompare -OutDir $tmp 2>&1 |
         Out-String
 

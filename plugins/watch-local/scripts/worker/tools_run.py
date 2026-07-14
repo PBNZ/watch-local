@@ -35,16 +35,16 @@ import subprocess
 import sys
 from pathlib import Path
 
-sys.path.insert(0, "/app")
-from frames import (  # noqa: E402
+from frames import (
     auto_fps, auto_fps_focus, extract, extract_audio_for_whisper,
     format_time, get_metadata, MAX_FPS, parse_time,
 )
-from captions import classify_subtitle_source  # noqa: E402
-from formats import build_format_selector  # noqa: E402
+from captions import classify_subtitle_source
+from formats import build_format_selector
 
 
-WORK = Path("/work")
+# Host job dir when run natively (W_WORK_DIR); /work inside a container.
+WORK = Path(os.environ.get("W_WORK_DIR", "/work"))
 DL_DIR = WORK / "download"
 FRAMES_DIR = WORK / "frames"
 AUDIO_PATH = WORK / "audio.mp3"
@@ -93,7 +93,7 @@ def _pick_video(out_dir: Path):
 
 def download_url(url: str) -> dict:
     if shutil.which("yt-dlp") is None:
-        raise SystemExit("yt-dlp is not installed in this container")
+        raise SystemExit("yt-dlp not found on worker PATH")
     DL_DIR.mkdir(parents=True, exist_ok=True)
     output_template = str(DL_DIR / "video.%(ext)s")
     # Best quality by default; W_MAX_HEIGHT (watch.ps1 -MaxHeight) optionally
@@ -150,7 +150,7 @@ def download_url(url: str) -> dict:
 def resolve_local(path: str) -> dict:
     p = Path(path)
     if not p.exists():
-        raise SystemExit(f"file not found inside container: {p}")
+        raise SystemExit(f"file not found: {p}")
     if p.suffix.lower() not in VIDEO_EXTS:
         print(
             f"[tools] warning: {p.suffix} not a known video extension, proceeding anyway",

@@ -12,8 +12,7 @@ import os
 import subprocess
 import sys
 
-sys.path.insert(0, "/app")
-from formats import build_format_selector  # noqa: E402
+from formats import build_format_selector
 
 
 def main() -> int:

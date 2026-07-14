@@ -27,7 +27,7 @@ The secondary appears in the report inside a `<details>` fold.
 
 ## The comparison stage
 
-`compare.py` (in the `tools` container -- no GPU needed) computes:
+`compare.py` (plain Python, no GPU needed) computes:
 
 - **length_ratio** = `min(words_a, words_b) / max(words_a, words_b)`
 - **word_jaccard** = set intersection over union, over lowercased

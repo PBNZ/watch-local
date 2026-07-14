@@ -4,7 +4,7 @@
 
 A port of [`bradautomates/claude-video`](https://github.com/bradautomates/claude-video)
 that drops the cloud Whisper backends (Groq / OpenAI) and runs everything on the
-user's machine via Docker:
+user's machine, on a self-provisioned portable runtime (no Docker):
 
 - Downloads with `yt-dlp` -- public URLs (YouTube, Vimeo, X, TikTok, Twitch, hundreds more)
 - Extracts auto-scaled survey frames with `ffmpeg` (768px default), plus
@@ -17,28 +17,38 @@ user's machine via Docker:
 - When creator-uploaded captions exist, they are primary and Whisper is a
   compared secondary -- the report carries a similarity score and flags major
   divergence
-- All workers run in Docker containers via plain `docker run --rm`, on demand --
-  nothing stays running between calls
+- All tools (yt-dlp, ffmpeg, deno, Python + faster-whisper) are downloaded
+  as pinned portable binaries into the plugin's own state folder -- nothing
+  installed on the system, nothing on PATH, no admin rights. **Delete
+  `%LOCALAPPDATA%\watch-local\` and every trace is gone.**
 
 **Vibe-coded with Claude for personal use, shared because it's too useful
 not to.** Tested seriously (unit suites, real end-to-end runs, CI), but
-built primarily for one setup: Claude Code on Windows 11 + NVIDIA GPU +
-Docker Desktop. Pre-release. CPU-only mode and non-Windows hosts
-(PowerShell 7 + Docker, CPU mode) are supported but newer and less tested.
+built primarily for one setup: Claude Code on Windows 11 + NVIDIA GPU.
+Pre-release. CPU-only mode and non-Windows hosts (PowerShell 7, CPU mode)
+are supported but newer and less tested.
 
 ## Prerequisites
 
 - Claude Code (CLI or desktop app)
-- Windows 11 (primary; PowerShell 5.1 launcher) -- or Linux/macOS with
-  PowerShell 7 (`pwsh`), CPU mode
-- Docker Desktop with WSL2 backend (Windows) or Docker Engine (Linux)
+- Windows 11 (primary; PowerShell 5.1 launcher, ships with Windows) -- or
+  Linux x64 / macOS Apple Silicon with PowerShell 7 (`pwsh`), CPU mode.
+  **pwsh is NOT preinstalled on Linux/macOS** -- install it first
+  (macOS: `brew install powershell`; Linux: Microsoft package repo or
+  `sudo snap install powershell --classic`; all methods:
+  https://learn.microsoft.com/powershell/scripting/install/installing-powershell)
 - NVIDIA GPU **optional**: detected automatically and used for NVDEC decode
   + CUDA whisper; without one, setup configures CPU-only mode (whisper on
   int8, `small` model recommended)
-- ~7 GB free disk for images on GPU machines (~2 GB CPU-only) + the whisper
-  model (~3 GB `large-v3`, ~500 MB `small`)
+- ~0.5 GB free disk for the runtime on CPU machines (~2 GB on GPU machines,
+  CUDA libraries included) + the whisper model (~3 GB `large-v3`, ~500 MB
+  `small`)
+- Ability to run downloaded executables from your user profile (standard;
+  strict AppLocker/WDAC policies may block it)
 
-You do NOT need yt-dlp or ffmpeg on the host -- both run inside containers.
+**No Docker.** You do NOT need yt-dlp, ffmpeg, or Python on the host --
+the plugin provisions its own portable copies, hash-verified against
+pinned versions.
 
 ## Install
 
@@ -52,15 +62,16 @@ README), then run the onboarding wizard once:
 /watch-setup
 ```
 
-First-time setup is slow and the wizard says so upfront: tools image build
-(~3 min), whisper image build (~5-15 min), model pull (~3 GB for `large-v3`).
+First-time setup downloads everything it needs and says so upfront:
+portable tools (~190 MB), the whisper Python stack (~100 MB CPU / ~1.5 GB
+GPU with CUDA libraries), and the model (~3 GB for `large-v3`).
 
 ## Commands
 
 | Command | What it does |
 |---|---|
 | `/watch <url-or-path> [question] [flags]` | The main pipeline: download/read, frames, transcribe, report. |
-| `/watch-setup` | Interactive onboarding: verify Docker, detect GPU (or configure CPU mode), build images, warm the model, smoke test. |
+| `/watch-setup` | Interactive onboarding: provision the portable runtime, detect GPU (or configure CPU mode), warm the model, smoke test. |
 | `/watch:save-here` | Promote the last (or a named) job's artifacts into `./watch-local-output/<slug>/`. |
 | `/watch:grab-frames` | Pull native-resolution stills of exact moments from an already-watched job. |
 
@@ -89,29 +100,29 @@ full reference (defaults, caps, exclusivity rules).
 watch.ps1:
   1. Slugify -> per-job dir under %LOCALAPPDATA%\watch-local\jobs\<slug>\
   2. Resolve source:
-     - URL   -> passed to the tools container
-     - local -> bind-mount parent dir read-only as /input
-     - UNC   -> copy to %TEMP%\watch-local-stage\<slug>\, then bind-mount
+     - URL   -> passed to the tools worker
+     - local -> full host path passed straight through
+     - UNC   -> copy to %TEMP%\watch-local-stage\<slug>\ first (fast re-reads)
   3. Disk-space preflight (yt-dlp dry-run size probe for URLs)
-  4. docker run --rm watch-local/tools:1
+  4. tools_run.py on the portable runtime
        (yt-dlp download, ffprobe metadata, ffmpeg frames + audio.mp3,
         caption provenance classification)  -> intermediate.json
-       [GPU machines: + --gpus all + W_HWACCEL=cuda -> ffmpeg decodes on NVDEC]
-  5. docker run --rm watch-local/whisper:*   (ALWAYS, if audio)
-       GPU: --gpus all whisper:cu128 (CUDA/float16)
-       CPU: whisper:cpu (int8)      -> transcript_whisper.json
-  6. docker run --rm watch-local/tools:1 compare.py         (if creator subs)
+       [GPU machines: W_HWACCEL=cuda -> ffmpeg decodes on NVDEC]
+  5. whisper_run.py   (ALWAYS, if audio)
+       GPU: CUDA/float16 (pip cuBLAS/cuDNN wheels)
+       CPU: int8         -> transcript_whisper.json
+  6. compare.py                                   (if creator subs)
        -> comparison.json (similarity metrics + significance)
   7. Pick primary transcript per provenance rules
-  8. Markdown report; rewrite container paths to host C:/... form
+  8. Markdown report with real host paths
    |
    v
 Claude Reads each frame path, then answers grounded in frames + transcript.
 ```
 
-Per-call workers use plain `docker run --rm` deliberately -- `docker compose
-run` intermittently deadlocks at container start on the WSL2 backend (see
-CHANGELOG 0.2.2). Image builds still use `docker compose build`.
+The runtime lives at `%LOCALAPPDATA%\watch-local\runtime\` -- pinned
+portable binaries plus a uv-managed CPython venv, hash-verified downloads,
+per-process PATH only. See [docs/architecture.md](../../docs/architecture.md).
 
 ## Files
 
@@ -119,12 +130,7 @@ CHANGELOG 0.2.2). Image builds still use `docker compose build`.
 watch-local/
 ├── .claude-plugin/plugin.json
 ├── commands/                     # /watch, /watch-setup, /watch:save-here, /watch:grab-frames
-├── hooks/                        # SessionStart marker check (fast, no docker)
-├── docker/
-│   ├── Dockerfile.tools          # python:3.11-slim + yt-dlp + ffmpeg
-│   ├── Dockerfile.whisper        # cuda:12.8 + faster-whisper (GPU machines)
-│   ├── Dockerfile.whisper-cpu    # python:3.11-slim + faster-whisper (CPU machines)
-│   └── docker-compose.yml        # build manifest (builds only)
+├── hooks/                        # SessionStart marker check (fast)
 ├── scripts/
 │   ├── watch.ps1                 # host orchestrator
 │   ├── setup.ps1                 # preflight, install, config, purge tools
@@ -133,7 +139,9 @@ watch-local/
 │   ├── grab-frames.ps1           # native stills from an existing job
 │   ├── build-zip.ps1             # dist zip builder
 │   ├── _lib.ps1                  # shared helpers, exit codes, scope guard
-│   └── worker/                   # python workers that run inside the containers
+│   ├── _runtime.ps1              # portable runtime: provision + worker invocation
+│   ├── runtime-manifest.json     # pinned versions, URLs, sha256 hashes
+│   └── worker/                   # python workers (run natively)
 ├── SKILL.md                      # the contract Claude follows
 └── README.md
 ```
@@ -142,8 +150,8 @@ watch-local/
 
 - **Windows 11 + NVIDIA GPU is the battle-tested path.** CPU-only mode and
   Linux/macOS (pwsh, CPU mode) are implemented and unit-tested but have had
-  far less real-world use. GPU mode on Linux needs the NVIDIA Container
-  Toolkit and is untested here.
+  far less real-world use. macOS ffmpeg is an x86_64 build (Rosetta 2 on
+  Apple Silicon).
 - **CPU transcription is slow with big models.** `large-v3` on CPU can
   approach real-time on long videos; the launcher warns and the wizard
   recommends `small` on CPU machines.
@@ -159,6 +167,8 @@ watch-local/
 - **Single-GPU systems assumed.** No multi-GPU scheduling.
 - Whisper transcribes the full audio track even when `-Start`/`-End` focus is
   set (the report filters the displayed transcript to the focus range).
+- **YouTube changes break yt-dlp periodically** -- run
+  `setup.ps1 -UpdateYtDlp` (self-update) when downloads start failing.
 
 ## Differences vs upstream
 
@@ -166,10 +176,10 @@ watch-local/
 |---|---|---|
 | Transcription | Groq / OpenAI Whisper API, captions preferred | local faster-whisper ALWAYS + caption comparison |
 | Network for transcript | yes (audio uploaded) | none |
-| Tools install | host (brew / winget) | inside Docker |
+| Tools install | host (brew / winget) | self-provisioned portable runtime in the state folder |
 | Host OS | macOS / Linux / Windows | Windows (primary); Linux/macOS CPU mode (newer) |
 | API keys | required for Whisper fallback | none |
-| First-run cost | ~10s (brew install) | ~10-20 min (image build + model pull) |
+| First-run cost | ~10s (brew install) | ~5-10 min (runtime + model download) |
 | Per-call latency | API round trip | local GPU (or CPU) |
 | UNC / SMB sources | no | yes (auto-staged) |
 | Native-res screenshots | no | yes (`-Screenshots`, `/watch:grab-frames`) |

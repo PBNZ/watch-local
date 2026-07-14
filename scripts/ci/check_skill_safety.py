@@ -30,7 +30,8 @@ SCAN_GLOBS = (
 # Hosts these files legitimately reference. Subdomains are allowed
 # (www.docker.com matches docker.com). Anything else fails the build.
 ALLOWED_HOSTS = {
-    "docker.com",     # Docker Desktop install link in SKILL.md
+    "docker.com",            # legacy Docker-era links in CHANGELOG history
+    "learn.microsoft.com",   # PowerShell 7 install instructions (Linux/macOS)
     "github.com",     # upstream project credit (bradautomates/claude-video)
     "youtube.com",    # example video links
     "youtu.be",       # example video links

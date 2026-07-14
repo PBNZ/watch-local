@@ -2,28 +2,30 @@
 
 A Claude Code plugin marketplace containing the **watch-local** plugin --
 a fully local port of `bradautomates/claude-video` that runs
-faster-whisper via Docker. It auto-detects your NVIDIA GPU and uses it
-for both video decode (NVDEC) and transcription (CUDA); without one it
-runs in a fully working CPU-only mode. No cloud API keys.
+faster-whisper natively on a self-contained portable runtime (no Docker).
+It auto-detects your NVIDIA GPU and uses it for both video decode (NVDEC)
+and transcription (CUDA); without one it runs in a fully working CPU-only
+mode. No cloud API keys, no admin rights, nothing installed on the system
+-- delete one folder and every trace is gone.
 
 > **What this is (read first):** this plugin was **vibe-coded with Claude
 > for personal use** -- and turned out too useful not to share. It is
 > genuinely tested (real end-to-end runs, CI with the official strict
 > plugin validator and safety scans), but it was built primarily for one
-> setup: **Claude Code on Windows 11 with an NVIDIA GPU and Docker
-> Desktop**. CPU-only mode and non-Windows (PowerShell 7 + Docker) are
-> newer and less battle-tested. If your machine matches the prerequisites
-> below, it should just work. If it doesn't, expect to get your hands
-> dirty -- issues and PRs welcome, support not promised.
+> setup: **Claude Code on Windows 11 with an NVIDIA GPU**. CPU-only mode
+> and non-Windows hosts (PowerShell 7) are newer and less battle-tested.
+> If your machine matches the prerequisites below, it should just work.
+> If it doesn't, expect to get your hands dirty -- issues and PRs
+> welcome, support not promised.
 
 ## Status
 
 <!-- state:begin keys=overall_status,gpu_support,platform_support -->
 | Fact | Value | As of |
 |---|---|---|
-| Release status | 0.4.0-rc.1 pre-release (release candidate) | 2026-07-13 |
-| GPU / compute support | auto-detected -- NVDEC decode + CUDA whisper on NVIDIA GPUs, CPU-only fallback (int8) otherwise | 2026-07-13 |
-| Host platform support | Windows 11 (primary, best-tested); Linux/macOS via PowerShell 7, CPU mode (newer, less tested) | 2026-07-13 |
+| Release status | 0.5.0-rc.1 pre-release (release candidate) | 2026-07-14 |
+| GPU / compute support | auto-detected -- NVDEC decode + CUDA whisper on NVIDIA GPUs, CPU-only fallback (int8) otherwise | 2026-07-14 |
+| Host platform support | Windows 11 (primary, best-tested); Linux x64 / macOS arm64 via PowerShell 7, CPU mode (newer, less tested) | 2026-07-14 |
 <!-- state:end -->
 
 ## What's in the box
@@ -32,8 +34,8 @@ runs in a fully working CPU-only mode. No cloud API keys.
 - `/watch-setup` -- one-time interactive wizard
 - `/watch:save-here` -- promote a job into the current project dir
 - `/watch:grab-frames` -- native-resolution stills from an already-watched job
-- Local transcription via `faster-whisper` in Docker (always runs) --
-  CUDA on a detected NVIDIA GPU, int8 CPU otherwise
+- Local transcription via `faster-whisper` (always runs) -- CUDA on a
+  detected NVIDIA GPU, int8 CPU otherwise
 - GPU-accelerated video decode (NVDEC) for frame extraction when the
   detected GPU supports it
 - Caption-provenance-aware transcripts (creator subs + Whisper + comparison)
@@ -46,24 +48,34 @@ runs in a fully working CPU-only mode. No cloud API keys.
 
 Primary (best-tested) setup:
 
-- **Claude Code** (CLI or desktop app) running on the Windows host
+- **Claude Code** (CLI or desktop app) running on the host
 - **Windows 11** (PowerShell 5.1 launcher; ships with Windows)
-- **Docker Desktop** with WSL2 backend
 - **NVIDIA GPU** (optional but recommended; modern, including Blackwell
-  sm_120) with the latest Game Ready / Studio driver and Docker GPU
-  support enabled -- setup detects it and uses NVDEC + CUDA automatically
-- **Disk:** ~7 GB for images on GPU machines (~2 GB CPU-only), plus the
-  whisper model (~3 GB for `large-v3`, ~500 MB for `small`)
+  sm_120) with a current Game Ready / Studio driver -- setup detects it
+  and uses NVDEC + CUDA automatically
+- **Disk:** ~0.5 GB runtime on CPU machines, ~2 GB on GPU machines
+  (CUDA libraries), plus the whisper model (~3 GB for `large-v3`,
+  ~500 MB for `small`)
 - Internet access for video downloads (URL sources) and the one-time
-  image build / model pull
+  runtime + model download
+- The ability to run downloaded executables from your user profile
+  (standard on most machines; strict AppLocker/WDAC policies may block it)
+
+**No Docker.** No admin rights. Nothing is installed system-wide: setup
+downloads pinned portable binaries (yt-dlp, ffmpeg, deno, uv) and a
+self-contained Python into `%LOCALAPPDATA%\watch-local\runtime\`, verified
+against sha256 pins. Nothing touches PATH, the registry, or Program
+Files. **Deleting `%LOCALAPPDATA%\watch-local\` removes everything.**
 
 No NVIDIA GPU? Setup configures **CPU-only mode** automatically:
 everything works, transcription is just slower (the wizard recommends the
-`small` model there). Linux/macOS hosts with PowerShell 7 (`pwsh`) +
-Docker should work in CPU-only mode but are newer and less tested; GPU
-mode on Linux additionally needs the NVIDIA Container Toolkit. AMD/Intel
-GPUs are used for nothing (CPU mode). You do NOT need yt-dlp or ffmpeg
-installed on the host -- they live in containers.
+`small` model there). Linux x64 and macOS (Apple Silicon) hosts with
+PowerShell 7 (`pwsh`) work in CPU mode but are newer and less tested.
+Note that **pwsh is not preinstalled on Linux/macOS** -- install it first
+(macOS: `brew install powershell`; Linux: Microsoft package repo or snap;
+see https://learn.microsoft.com/powershell/scripting/install/installing-powershell).
+AMD/Intel GPUs are used for nothing (CPU mode). You do NOT need yt-dlp,
+ffmpeg, or Python installed on the host -- the plugin brings its own.
 
 ## Install
 
@@ -80,10 +92,10 @@ installed on the host -- they live in containers.
    ```
 
 4. Restart Claude Code so the SessionStart hook loads.
-5. Run `/watch-setup` to verify Docker, detect your GPU (or configure
-   CPU-only mode), build images, and warm the whisper model. First-time
-   setup is slow (whisper image build ~5-15 min on GPU, ~2-5 min CPU;
-   model pull up to ~3 GB). The wizard tells you upfront.
+5. Run `/watch-setup` to download the portable runtime, detect your GPU
+   (or configure CPU-only mode), and warm the whisper model. Downloads:
+   ~190 MB of tools, +~1.5 GB CUDA libraries on GPU machines, plus the
+   model (up to ~3 GB). The wizard tells you upfront.
 
 ### From source (developers)
 
@@ -112,16 +124,17 @@ See [SKILL.md](./plugins/watch-local/SKILL.md) for the full flag reference.
 
 ## How it works (1-paragraph version)
 
-A PowerShell launcher resolves the source, runs the `tools` container
-(yt-dlp + ffmpeg) to download + extract frames + extract audio -- with
-ffmpeg decoding on NVDEC when the detected GPU supports it -- then runs
-the whisper container (CUDA 12.8 + faster-whisper on GPU machines, a
-slim CPU image with int8 quantization otherwise). GPU detection runs
-once at setup (re-probe with `setup.ps1 -DetectGpu`) and is cached in
-config. If the source has creator-uploaded captions, the launcher emits
-both transcripts side by side with a similarity score; if not, Whisper
-is primary. The host launcher rewrites all container paths to host
-`C:/...` form so Claude's `Read` tool resolves frames directly.
+A PowerShell launcher resolves the source, then runs plain Python workers
+on a portable runtime the plugin provisioned for itself: yt-dlp + ffmpeg
+download the video, extract frames (ffmpeg decoding on NVDEC when the
+detected GPU supports it), and extract audio; faster-whisper then
+transcribes -- CUDA/float16 through pip cuBLAS/cuDNN wheels on GPU
+machines, int8 on CPU. GPU detection runs once at setup (re-probe with
+`setup.ps1 -DetectGpu`) and is cached in config. If the source has
+creator-uploaded captions, the launcher emits both transcripts side by
+side with a similarity score; if not, Whisper is primary. All reported
+paths are real host paths, so Claude's `Read` tool resolves frames
+directly.
 
 Full architecture: [`docs/architecture.md`](./docs/architecture.md)
 
@@ -134,6 +147,8 @@ inspected / changed via:
 powershell -File <plugin>\scripts\setup.ps1 -ShowConfig
 powershell -File <plugin>\scripts\setup.ps1 -SetJobsRoot D:\watch-jobs
 powershell -File <plugin>\scripts\setup.ps1 -SetDefaultModel medium
+powershell -File <plugin>\scripts\setup.ps1 -UpdateYtDlp    # YouTube broke? update yt-dlp
+powershell -File <plugin>\scripts\setup.ps1 -UpdateRuntime  # re-converge to pinned versions
 ```
 
 Defaults (Windows; on Linux/macOS the base is `$XDG_DATA_HOME` or

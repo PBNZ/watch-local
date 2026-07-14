@@ -16,6 +16,10 @@ Then run:
 powershell.exe -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/save-here.ps1" -Slug <slug> -Cwd "$PWD" [other flags]
 ```
 
+(On Linux/macOS use `pwsh` instead of `powershell.exe -ExecutionPolicy Bypass`.
+If `pwsh` is not on PATH, stop and follow the PowerShell 7 install guidance in
+SKILL.md's invocation note.)
+
 The script writes a small markdown report listing the destination path. Surface that path to the user clearly so they can find the artifacts in their current project folder.
 
 For local / UNC source files, the script writes a `source-link.txt` with size + mtime + sha256-of-first-64KB instead of copying the (often large) source file. Mention this to the user when applicable so they know the source stays where it is. If they want the source file copied too, suggest re-running with `--include-source`.

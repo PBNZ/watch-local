@@ -25,6 +25,45 @@ jobs:
       - name: Validate plugin
         run: claude plugin validate --strict ./plugins/watch-local
 
+  unit-tests:
+    name: unit tests (${{ matrix.os }} / ${{ matrix.engine }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # All launcher engines: Windows PowerShell 5.1 (the Windows
+        # default), pwsh on Windows, and pwsh on Linux. Child-process
+        # tests follow the invoking engine, so each matrix leg exercises
+        # the whole unit layer on that engine/OS.
+        include:
+          - os: windows-latest
+            engine: powershell
+          - os: windows-latest
+            engine: pwsh
+          - os: ubuntu-latest
+            engine: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pytest
+        run: python -m pip install pytest
+
+      - name: Install Pester 5
+        shell: ${{ matrix.engine }}
+        run: |
+          if ($PSVersionTable.PSVersion.Major -lt 6) {
+            Install-PackageProvider -Name NuGet -Force -Scope CurrentUser | Out-Null
+          }
+          Install-Module Pester -MinimumVersion 5.0 -MaximumVersion 5.99 -Force -SkipPublisherCheck -Scope CurrentUser
+
+      - name: Run unit suite
+        shell: ${{ matrix.engine }}
+        run: ./tests/run-tests.ps1 -Unit
+
   ci-validators:
     name: Python validators
     runs-on: ubuntu-latest

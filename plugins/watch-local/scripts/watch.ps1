@@ -4,15 +4,16 @@
     /watch host orchestrator -- runs the tools + whisper + compare pipeline.
 
 .DESCRIPTION
-    Pipeline:
+    Pipeline (all workers run natively on the portable runtime under the
+    state root -- no Docker):
         1. Slugify source -> per-job dir under jobs_root.
         2. Resolve source (URL / local / UNC -> stage).
         3. Disk-space pre-flight against jobs_root + staging_root.
-        4. tools container: download, frames, audio, classify subs.
-        5. whisper container: transcribe audio (ALWAYS).
-        6. tools container: compare creator subs vs whisper transcript.
+        4. tools worker: download, frames, audio, classify subs.
+        5. whisper worker: transcribe audio (ALWAYS).
+        6. compare worker: creator subs vs whisper transcript.
         7. Pick primary transcript per provenance rules.
-        8. Emit markdown report. Translate paths to host C:/... form.
+        8. Emit markdown report.
         9. Optional: promote to CWD via -SaveHere. Cleanup if asked.
 
     Exit codes documented in _lib.ps1 ($WL_EXIT).
@@ -77,11 +78,6 @@ $minFreeJobs    = [double]$config.min_free_gb_jobs
 $minFreeStaging = [double]$config.min_free_gb_staging
 $minFreeModels  = [double]$config.min_free_gb_models
 
-$pluginRoot  = Split-Path -Parent $PSScriptRoot
-$dockerDir   = Join-Path $pluginRoot 'docker'
-$composeFile = Join-Path $dockerDir 'docker-compose.yml'
-$workerDir   = Join-Path $PSScriptRoot 'worker'
-
 foreach ($p in @($jobsRoot, $modelsDir, $stagingRoot)) {
     if (-not (Test-Path -LiteralPath $p)) {
         New-Item -ItemType Directory -Force -Path $p | Out-Null
@@ -122,9 +118,7 @@ if ($OutDir) {
 Write-Detail "work dir: $workDir"
 
 $isUrl = $false
-$inputMountHost = $null
-$inputMountContainer = '/input'
-$containerSource = $Source
+$workerSource = $Source   # what tools_run.py receives as W_SOURCE (host path or URL)
 $stagedDir = $null
 $stagedFile = $null
 $originalSourcePath = $null
@@ -133,6 +127,9 @@ if ($Source -match '^https?://') {
     $isUrl = $true
     Write-Stage "source is URL"
 } elseif ($Source.StartsWith('\\')) {
+    # Staged copy kept deliberately: the pipeline reads the source several
+    # times (probe, frames, audio, optional stills) and a local copy beats
+    # repeated SMB round-trips.
     Write-Stage "source is UNC -- staging locally first"
     if (-not (Test-Path -LiteralPath $Source)) {
         Write-Err "UNC source not reachable: $Source"
@@ -148,8 +145,7 @@ if ($Source -match '^https?://') {
         $sizeMB = [math]::Round(($srcItem.Length / 1MB), 1)
         if ($sizeMB -gt 1024) { Write-Warn "source is $sizeMB MB -- copy may take a while" }
         Copy-Item -LiteralPath $Source -Destination $stagedFile -Force
-        $inputMountHost = $jobStage
-        $containerSource = "$inputMountContainer/$fname"
+        $workerSource = $stagedFile
         $originalSourcePath = $Source
     } catch {
         Write-Err "UNC stage failed: $($_.Exception.Message)"
@@ -163,10 +159,9 @@ if ($Source -match '^https?://') {
         Write-Err "local source not found: $Source"
         exit $script:WL_EXIT.SOURCE_BAD
     }
-    $inputMountHost = $item.Directory.FullName
-    $containerSource = "$inputMountContainer/$($item.Name)"
+    $workerSource = $item.FullName
     $originalSourcePath = $item.FullName
-    Write-Stage "source is local file -- mounting parent dir read-only"
+    Write-Stage "source is local file"
 }
 
 #endregion
@@ -175,30 +170,16 @@ if ($Source -match '^https?://') {
 
 function Get-DownloadEstimateMB {
     param([string]$Url)
-    # Native command stderr under StrictMode+Stop becomes a terminating
-    # error. Lower preference inside this helper so we can return null
-    # cleanly when yt-dlp probe doesn't yield a size.
-    $orig = $ErrorActionPreference
     try {
-        $ErrorActionPreference = 'Continue'
-        # Plain `docker run` (not `docker compose run`) -- compose run
-        # deadlocks at container-start on WSL2. stdout captured here for
-        # the JSON estimate, so this can't go through Invoke-WLRun (which
-        # routes stdout to Out-Host).
-        $out = & docker run --rm --name "watch-local-probe-$(Get-Random -Maximum 99999)" `
-            -e "W_URL=$Url" `
-            -e "W_MAX_HEIGHT=$MaxHeight" `
-            -v "$(ConvertTo-DockerPath $workerDir):/app:ro" `
-            $script:WL_IMG_TOOLS python3 /app/disk.py 2>$null
-        if ($LASTEXITCODE -ne 0 -or -not $out) { return $null }
-        $obj = $out | Out-String | ConvertFrom-Json
+        $res = Invoke-WLWorkerCapture -Script 'disk.py' `
+            -EnvVars @{ W_URL = $Url; W_MAX_HEIGHT = $MaxHeight } -Name 'probe'
+        if ($res.ExitCode -ne 0 -or -not $res.Output) { return $null }
+        $obj = $res.Output | ConvertFrom-Json
         if ($obj.bytes) { return [math]::Round($obj.bytes * 1.3 / 1MB, 0) }
         return $null
     } catch {
         Write-Detail "download estimate failed: $($_.Exception.Message)"
         return $null
-    } finally {
-        $ErrorActionPreference = $orig
     }
 }
 
@@ -250,56 +231,51 @@ if (-not $modelHasFiles) {
 
 #region Tools
 
-if (-not $DryRun) { Assert-DockerReady }
+if (-not $DryRun) { Assert-WLRuntimeReady }
 
 # GPU mode for this run: detection result from config (setup wrote it), or
-# a one-time probe-and-persist for pre-upgrade configs. DryRun never talks
-# to docker, so it falls back to whatever the config already holds.
+# a one-time probe-and-persist for pre-upgrade configs. DryRun never spawns
+# workers, so it falls back to whatever the config already holds.
 $gpuInfo = if ($DryRun) { Get-WLObjectProp $config 'gpu' } else { Get-WLGpuInfo -Config $config }
-$gpuPresent  = [bool](Get-WLObjectProp $gpuInfo 'present')
-$toolsGpuFlags = Get-WLToolsGpuFlags -Gpu $gpuInfo
+$gpuPresent   = [bool](Get-WLObjectProp $gpuInfo 'present')
+$toolsGpuEnv  = Get-WLToolsWorkerEnv -Gpu $gpuInfo
+$nvdecOn      = $toolsGpuEnv.ContainsKey('W_HWACCEL')
+$whisperOnGpu = $gpuPresent -and [bool](Get-WLObjectProp $gpuInfo 'cuda_whisper')
 if ($gpuPresent) {
-    $decodeLabel = if ($toolsGpuFlags.Count -gt 0) { 'NVDEC decode + CUDA whisper' } else { 'CUDA whisper (no NVDEC)' }
-    Write-Stage ("compute: GPU -- {0} ({1})" -f (Get-WLObjectProp $gpuInfo 'name'), $decodeLabel)
+    $decodeLabel = if ($nvdecOn) { 'NVDEC decode' } else { 'CPU decode' }
+    $whisperLabel = if ($whisperOnGpu) { 'CUDA whisper' } else { 'CPU whisper' }
+    Write-Stage ("compute: GPU -- {0} ({1} + {2})" -f (Get-WLObjectProp $gpuInfo 'name'), $decodeLabel, $whisperLabel)
 } else {
     Write-Stage 'compute: CPU-only (no NVIDIA GPU detected -- run setup.ps1 -DetectGpu after driver changes)'
 }
 
-$envArgs = @(
-    '-e', "W_SOURCE=$containerSource",
-    '-e', ("W_IS_URL=" + $(if ($isUrl) { '1' } else { '0' })),
-    '-e', "W_MAX_FRAMES=$MaxFrames",
-    '-e', "W_RESOLUTION=$Resolution",
-    '-e', "W_MAX_HEIGHT=$MaxHeight"
-)
-if ($null -ne $Fps) { $envArgs += @('-e', "W_FPS=$Fps") }
-if ($Start)         { $envArgs += @('-e', "W_START=$Start") }
-if ($End)           { $envArgs += @('-e', "W_END=$End") }
+$toolsEnv = @{
+    W_WORK_DIR   = $workDir
+    W_SOURCE     = $workerSource
+    W_IS_URL     = $(if ($isUrl) { '1' } else { '0' })
+    W_MAX_FRAMES = $MaxFrames
+    W_RESOLUTION = $Resolution
+    W_MAX_HEIGHT = $MaxHeight
+} + $toolsGpuEnv
+if ($null -ne $Fps) { $toolsEnv.W_FPS = $Fps }
+if ($Start)         { $toolsEnv.W_START = $Start }
+if ($End)           { $toolsEnv.W_END = $End }
 
-$mountArgs = @(
-    '-v', "$(ConvertTo-DockerPath $workDir):/work",
-    '-v', "$(ConvertTo-DockerPath $workerDir):/app:ro"
-)
-if ($inputMountHost) {
-    $mountArgs += @('-v', "$(ConvertTo-DockerPath $inputMountHost):${inputMountContainer}:ro")
-}
-
-$toolsRunArgs = $toolsGpuFlags + $envArgs + $mountArgs + @($script:WL_IMG_TOOLS, 'python3', '/app/tools_run.py')
-
-Write-Stage "running tools container..."
+Write-Stage "running tools worker..."
 if ($DryRun) {
-    Write-Stage "DRY RUN: docker run --rm $($toolsRunArgs -join ' ')"
+    $envDump = ($toolsEnv.Keys | Sort-Object | ForEach-Object { "$_=$($toolsEnv[$_])" }) -join ' '
+    Write-Stage "DRY RUN: python worker/tools_run.py with $envDump"
 } else {
-    $code = Invoke-WLRun $toolsRunArgs -Name 'tools'
+    $code = Invoke-WLWorker -Script 'tools_run.py' -EnvVars $toolsEnv -Name 'tools'
     if ($code -ne 0) {
-        Write-Err "tools container failed (exit $code)"
+        Write-Err "tools worker failed (exit $code)"
         exit $script:WL_EXIT.TOOLS_FAILED
     }
 }
 
 $intermediatePath = Join-Path $workDir 'intermediate.json'
 if (-not $DryRun -and -not (Test-Path -LiteralPath $intermediatePath)) {
-    Write-Err "tools container did not write intermediate.json"
+    Write-Err "tools worker did not write intermediate.json"
     exit $script:WL_EXIT.TOOLS_FAILED
 }
 $intermediate = if ($DryRun) { $null } else {
@@ -320,26 +296,23 @@ if ($DryRun) {
     $skipWhisperReason = 'no audio track in source'
     Write-Warn "skipping whisper -- $skipWhisperReason"
 } else {
-    $deviceLabel = if ($gpuPresent) { 'GPU' } else { 'CPU' }
-    Write-Stage "running whisper container on $deviceLabel (model: $Model)..."
-    if (-not $gpuPresent -and $Model -eq 'large-v3') {
+    $deviceLabel = if ($whisperOnGpu) { 'GPU' } else { 'CPU' }
+    Write-Stage "running whisper on $deviceLabel (model: $Model)..."
+    if (-not $whisperOnGpu -and $Model -eq 'large-v3') {
         Write-Warn 'large-v3 on CPU is slow (can approach real-time on long videos). Consider -Model small or medium.'
     }
-    $whisperEnv = @('-e', "W_MODEL=$Model")
-    if ($Language) { $whisperEnv += @('-e', "W_LANGUAGE=$Language") }
-    $whisperMounts = @(
-        '-v', "$(ConvertTo-DockerPath $workDir):/work",
-        '-v', "$(ConvertTo-DockerPath $modelsDir):/models",
-        '-v', "$(ConvertTo-DockerPath $workerDir):/app:ro"
-    )
-    $whisperRunArgs = (Get-WLWhisperRunFlags -GpuPresent $gpuPresent) + $whisperEnv + $whisperMounts + @((Get-WLWhisperImage -GpuPresent $gpuPresent), 'python3', '/app/whisper_run.py')
-    $code = Invoke-WLRun $whisperRunArgs -Name 'whisper'
+    $whisperEnv = (Get-WLWhisperWorkerEnv -Gpu $gpuInfo -ModelsRoot $modelsDir) + @{
+        W_WORK_DIR = $workDir
+        W_MODEL    = $Model
+    }
+    if ($Language) { $whisperEnv.W_LANGUAGE = $Language }
+    $code = Invoke-WLWorker -Script 'whisper_run.py' -EnvVars $whisperEnv -Name 'whisper'
     if ($code -eq 0) {
         $whisperTranscript = Read-UTF8 (Join-Path $workDir 'transcript_whisper.json') | ConvertFrom-Json
         $whisperOk = $true
     } else {
-        $skipWhisperReason = "whisper container exited $code"
-        Write-Warn "whisper container failed (exit $code) -- emitting partial report"
+        $skipWhisperReason = "whisper worker exited $code"
+        Write-Warn "whisper worker failed (exit $code) -- emitting partial report"
     }
 }
 
@@ -356,20 +329,14 @@ if ($DryRun) {
 } elseif (-not $whisperOk) {
     Write-Detail "compare skipped: no whisper output"
 } else {
-    $creatorVttContainer = $null
-    if ($intermediate.subtitle_path) { $creatorVttContainer = [string]$intermediate.subtitle_path }
-    $cmpEnv = @(
-        '-e', 'W_WHISPER_JSON=/work/transcript_whisper.json',
-        '-e', 'W_OUT_JSON=/work/comparison.json'
-    )
-    if ($creatorVttContainer) { $cmpEnv += @('-e', "W_CREATOR_VTT=$creatorVttContainer") }
-    $cmpMounts = @(
-        '-v', "$(ConvertTo-DockerPath $workDir):/work",
-        '-v', "$(ConvertTo-DockerPath $workerDir):/app:ro"
-    )
+    $cmpEnv = @{
+        W_WORK_DIR     = $workDir
+        W_WHISPER_JSON = (Join-Path $workDir 'transcript_whisper.json')
+        W_OUT_JSON     = (Join-Path $workDir 'comparison.json')
+    }
+    if ($intermediate.subtitle_path) { $cmpEnv.W_CREATOR_VTT = [string]$intermediate.subtitle_path }
     Write-Stage "running comparison stage..."
-    $cmpRunArgs = $cmpEnv + $cmpMounts + @($script:WL_IMG_TOOLS, 'python3', '/app/compare.py')
-    $code = Invoke-WLRun $cmpRunArgs -Name 'compare'
+    $code = Invoke-WLWorker -Script 'compare.py' -EnvVars $cmpEnv -Name 'compare'
     if ($code -eq 0) {
         $comparison = Read-UTF8 (Join-Path $workDir 'comparison.json') | ConvertFrom-Json
     } else {
@@ -388,8 +355,7 @@ $whisperSegments = $null
 
 if (-not $DryRun) {
     if ($intermediate.subtitle_path) {
-        $vttHost = ConvertTo-HostPath -ContainerPath ([string]$intermediate.subtitle_path) -WorkHost $workDir -InputHost $inputMountHost
-        if (Test-Path -LiteralPath $vttHost) { $haveCreator = $true }
+        if (Test-Path -LiteralPath ([string]$intermediate.subtitle_path)) { $haveCreator = $true }
     }
     if ($whisperOk) { $haveWhisper = $true }
 }
@@ -423,10 +389,9 @@ if ($primaryLabel -eq 'whisper' -and $haveCreator) { $secondaryLabel = 'creator'
 #region Report
 
 function Read-CreatorVTT {
-    param([string]$ContainerPath)
-    $hostPath = ConvertTo-HostPath -ContainerPath $ContainerPath -WorkHost $workDir -InputHost $inputMountHost
-    if (-not (Test-Path -LiteralPath $hostPath)) { return $null }
-    $text = Read-UTF8 $hostPath
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    $text = Read-UTF8 $Path
     $segs = New-Object System.Collections.Generic.List[object]
     $rx = [regex]'(?m)^(\d{2}):(\d{2}):(\d{2})[\.,](\d{3})\s+-->\s+(\d{2}):(\d{2}):(\d{2})[\.,](\d{3})[^\r\n]*\r?\n((?:[^\r\n].*\r?\n?)+)'
     $rxTag = [regex]'<[^>]+>'
@@ -480,12 +445,12 @@ if ($DryRun) {
     Write-Output ""
     Write-Output "# watch: DRY RUN"
     Write-Output ""
-    Write-Output "_No work performed. See [watch] stderr above for the docker invocations that would have run._"
+    Write-Output "_No work performed. See [watch] stderr above for the worker invocations that would have run._"
     exit $script:WL_EXIT.OK
 }
 
 if ($haveCreator) {
-    $creatorSegments = Read-CreatorVTT -ContainerPath ([string]$intermediate.subtitle_path)
+    $creatorSegments = Read-CreatorVTT -Path ([string]$intermediate.subtitle_path)
     if (-not $creatorSegments) { $haveCreator = $false }
 }
 if ($haveWhisper) {
@@ -529,11 +494,12 @@ Write-Output "- **Frame size:** $($intermediate.resolution)px wide"
 $provLabel = if ($intermediate.subtitle_source) { [string]$intermediate.subtitle_source } else { 'none on source' }
 Write-Output "- **Caption provenance:** $provLabel"
 $computeLine = if ($gpuPresent) {
-    $dec = if ($toolsGpuFlags.Count -gt 0) { 'NVDEC' } else { 'CPU decode' }
-    "GPU -- $(Get-WLObjectProp $gpuInfo 'name') ($dec, CUDA whisper)"
+    $dec = if ($nvdecOn) { 'NVDEC' } else { 'CPU decode' }
+    $wsp = if ($whisperOnGpu) { 'CUDA whisper' } else { 'CPU whisper' }
+    "GPU -- $(Get-WLObjectProp $gpuInfo 'name') ($dec, $wsp)"
 } else { 'CPU-only' }
 Write-Output "- **Compute:** $computeLine"
-$whisperDevice = if ($gpuPresent) { 'GPU' } else { 'CPU' }
+$whisperDevice = if ($whisperOnGpu) { 'GPU' } else { 'CPU' }
 $whisperLine = if ($whisperOk) { "ran ($Model on $whisperDevice)" } else { "skipped/failed -- $skipWhisperReason" }
 Write-Output "- **Whisper:** $whisperLine"
 if ($comparison -and $comparison.metrics) {
@@ -586,7 +552,7 @@ if ($Cleanup -and -not $SaveHere) {
     Write-Output "(prints a preview + confirm token; re-run the same command with ``-JobConfirmToken <token>`` to delete)"
 } else {
     $framesBase = if ($Cleanup) { Join-Path $promotedDir 'frames' } else { Join-Path $workDir 'frames' }
-    Write-Output "Frames live at: ``$(ConvertTo-DockerPath $framesBase)``"
+    Write-Output "Frames live at: ``$(ConvertTo-WLSlashPath $framesBase)``"
     if ($Cleanup) {
         Write-Output ""
         Write-Output "_(-Cleanup deletes the canonical job dir at exit; the paths below are the -SaveHere promoted copies.)_"
@@ -596,9 +562,9 @@ if ($Cleanup -and -not $SaveHere) {
     Write-Output ""
     foreach ($frame in $intermediate.frames) {
         $hostPath = if ($Cleanup) {
-            ConvertTo-DockerPath (Join-Path $framesBase (Split-Path -Leaf ([string]$frame.path)))
+            ConvertTo-WLSlashPath (Join-Path $framesBase (Split-Path -Leaf ([string]$frame.path)))
         } else {
-            ConvertTo-HostPath -ContainerPath ([string]$frame.path) -WorkHost $workDir -InputHost $inputMountHost
+            ConvertTo-WLSlashPath ([string]$frame.path)
         }
         $stamp = Format-WLTime ([double]$frame.timestamp_seconds)
         Write-Output "- ``$hostPath`` (t=$stamp)"
@@ -647,9 +613,9 @@ if ($secondarySegments -and $secondarySegments.Count -gt 0) {
 Write-Output ""
 Write-Output "---"
 if ($Cleanup) {
-    Write-Output "_Work dir ``$(ConvertTo-DockerPath $workDir)`` is deleted when this command exits (-Cleanup)._"
+    Write-Output "_Work dir ``$(ConvertTo-WLSlashPath $workDir)`` is deleted when this command exits (-Cleanup)._"
 } else {
-    Write-Output "_Work dir: ``$(ConvertTo-DockerPath $workDir)`` -- delete when done via ``setup.ps1 -PurgeJob -Slug $slug`` (or re-run with -Cleanup)._"
+    Write-Output "_Work dir: ``$(ConvertTo-WLSlashPath $workDir)`` -- delete when done via ``setup.ps1 -PurgeJob -Slug $slug`` (or re-run with -Cleanup)._"
 }
 
 #endregion
@@ -660,34 +626,30 @@ if ($Cleanup) {
 # moments from the (best-quality) source, into <workDir>/screenshots/. They
 # are promoted by -SaveHere and survive until -Cleanup, same as frames.
 if (-not $DryRun -and $Screenshots) {
-    $srcVideoContainer = $null
-    $shotMounts = @(
-        '-v', "$(ConvertTo-DockerPath $workDir):/work",
-        '-v', "$(ConvertTo-DockerPath $workerDir):/app:ro"
-    )
+    $srcVideo = $null
     if ($isUrl) {
         $dl = Join-Path $workDir 'download'
         $vid = Get-ChildItem -LiteralPath $dl -File -ErrorAction SilentlyContinue |
                Where-Object { $_.Extension -match '^\.(mp4|mkv|webm|mov|m4v|avi|flv|wmv)$' } |
                Select-Object -First 1
-        if ($vid) { $srcVideoContainer = "/work/download/$($vid.Name)" }
-    } elseif ($inputMountHost) {
-        $shotMounts += @('-v', "$(ConvertTo-DockerPath $inputMountHost):/input:ro")
-        $srcVideoContainer = $containerSource
+        if ($vid) { $srcVideo = $vid.FullName }
+    } elseif ($workerSource -and (Test-Path -LiteralPath $workerSource)) {
+        $srcVideo = $workerSource
     }
 
-    if (-not $srcVideoContainer) {
+    if (-not $srcVideo) {
         Write-Warn "screenshots requested but source video not found -- skipping."
     } else {
         $resLabel = if ($StillResolution -gt 0) { "$StillResolution px" } else { 'native resolution' }
         Write-Stage "extracting screenshots at ${resLabel}: $Screenshots"
-        $shotEnv = @(
-            '-e', "W_VIDEO=$srcVideoContainer",
-            '-e', "W_SHOTS=$Screenshots",
-            '-e', 'W_OUT_DIR=/work/screenshots',
-            '-e', "W_STILL_RES=$StillResolution"
-        )
-        $code = Invoke-WLRun ($toolsGpuFlags + $shotEnv + $shotMounts + @($script:WL_IMG_TOOLS, 'python3', '/app/stills.py')) -Name 'screenshots'
+        $shotEnv = $toolsGpuEnv + @{
+            W_WORK_DIR  = $workDir
+            W_VIDEO     = $srcVideo
+            W_SHOTS     = $Screenshots
+            W_OUT_DIR   = (Join-Path $workDir 'screenshots')
+            W_STILL_RES = $StillResolution
+        }
+        $code = Invoke-WLWorker -Script 'stills.py' -EnvVars $shotEnv -Name 'screenshots'
         $shotsDir = Join-Path $workDir 'screenshots'
         if ($code -eq 0 -and (Test-Path -LiteralPath $shotsDir)) {
             $shotFiles = @(Get-ChildItem -LiteralPath $shotsDir -File -ErrorAction SilentlyContinue |
@@ -703,7 +665,7 @@ if (-not $DryRun -and $Screenshots) {
                     Write-Output "Full-resolution stills of the requested moments. Read these paths to view:"
                     foreach ($f in $shotFiles) {
                         $shotPath = if ($Cleanup) { Join-Path (Join-Path $promotedDir 'screenshots') $f.Name } else { $f.FullName }
-                        Write-Output "- ``$(ConvertTo-DockerPath $shotPath)``"
+                        Write-Output "- ``$(ConvertTo-WLSlashPath $shotPath)``"
                     }
                 }
             }

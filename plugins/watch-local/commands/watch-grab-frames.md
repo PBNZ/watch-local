@@ -21,6 +21,10 @@ Then run:
 powershell.exe -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/grab-frames.ps1" -Slug <slug-or-last> -Screenshots "<timestamps>" [-Resolution <N>]
 ```
 
+(On Linux/macOS use `pwsh` instead of `powershell.exe -ExecutionPolicy Bypass`.
+If `pwsh` is not on PATH, stop and follow the PowerShell 7 install guidance in
+SKILL.md's invocation note.)
+
 The script writes the stills into `<job>\screenshots\` and prints their paths.
 **Read each printed path** to view the screenshots, then present them to the
 user (or use them as the basis for whatever follow-up content was requested).

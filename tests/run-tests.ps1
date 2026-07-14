@@ -5,9 +5,9 @@
 
 .DESCRIPTION
     Layers:
-      -Unit          Python pytest + Pester unit tests.       (~10 s)
-      -Integration   Adds docker-backed worker checks.         (~30 s)
-      -Smoke         Adds real /watch run vs a public URL.     (~60 s)
+      -Unit          Python pytest + Pester unit tests.              (~10 s)
+      -Integration   Adds native worker checks (needs provisioned runtime). (~30 s)
+      -Smoke         Adds real /watch run vs a public URL.           (~60 s)
     Default = -Unit.
 
     All three layers can be combined. Each prints a per-layer summary at end.
@@ -28,9 +28,14 @@ if (-not ($Unit -or $Integration -or $Smoke)) { $Unit = $true }
 
 $root        = Split-Path -Parent $PSScriptRoot
 $testsRoot   = $PSScriptRoot
-$pluginRoot  = Join-Path $root 'plugins\watch-local'
-$composeFile = Join-Path $pluginRoot 'docker\docker-compose.yml'
-$workerDir   = Join-Path $pluginRoot 'scripts\worker'
+$pluginRoot  = Join-Path $root 'plugins/watch-local'
+$workerDir   = Join-Path $pluginRoot 'scripts/worker'
+
+# Linux distros ship `python3` with no `python` alias; Windows installs
+# usually provide `python`.
+$pythonCmd = if (Get-Command python -ErrorAction SilentlyContinue) { 'python' }
+             elseif (Get-Command python3 -ErrorAction SilentlyContinue) { 'python3' }
+             else { $null }
 
 $summary = [ordered]@{
     unit_pytest  = $null
@@ -47,19 +52,26 @@ function _Header([string]$label) {
 # ---- UNIT: pytest ---------------------------------------------------------
 if ($Unit) {
     _Header 'Unit -- pytest (Python)'
-    Push-Location (Join-Path $testsRoot 'python')
-    try {
-        & python -m pytest -v
-        $summary.unit_pytest = ($LASTEXITCODE -eq 0)
-    } finally {
-        Pop-Location
+    if ($null -eq $pythonCmd) {
+        Write-Warning 'python not found on PATH -- pytest layer failed.'
+        $summary.unit_pytest = $false
+    } else {
+        Push-Location (Join-Path $testsRoot 'python')
+        try {
+            & $pythonCmd -m pytest -v
+            $summary.unit_pytest = ($LASTEXITCODE -eq 0)
+        } finally {
+            Pop-Location
+        }
     }
 
     _Header 'Unit -- Pester (PowerShell)'
     try {
-        Import-Module Pester -MinimumVersion 5.0 -ErrorAction Stop
+        # 5.x line only: the suite targets the Pester 5 API, and Pester
+        # 6.0.0 currently fails to import on Linux pwsh.
+        Import-Module Pester -MinimumVersion 5.0 -MaximumVersion 5.99 -ErrorAction Stop
     } catch {
-        Write-Warning 'Pester 5+ not installed. Install with: Install-Module Pester -Force -SkipPublisherCheck'
+        Write-Warning 'Pester 5.x not installed. Install with: Install-Module Pester -MinimumVersion 5.0 -MaximumVersion 5.99 -Force -SkipPublisherCheck'
         $summary.unit_pester = $false
     }
     if ($null -eq $summary.unit_pester) {
@@ -75,10 +87,10 @@ if ($Unit) {
 
 # ---- INTEGRATION ----------------------------------------------------------
 if ($Integration) {
-    _Header 'Integration -- docker workers'
-    $integrationScript = Join-Path $testsRoot 'integration\Run-Integration.ps1'
+    _Header 'Integration -- native workers'
+    $integrationScript = Join-Path $testsRoot 'integration/Run-Integration.ps1'
     if (Test-Path -LiteralPath $integrationScript) {
-        & $integrationScript -ComposeFile $composeFile -WorkerDir $workerDir
+        & $integrationScript -WorkerDir $workerDir
         $summary.integration = ($LASTEXITCODE -eq 0)
     } else {
         Write-Warning "missing $integrationScript -- skipped."
@@ -89,7 +101,7 @@ if ($Integration) {
 # ---- SMOKE ---------------------------------------------------------------
 if ($Smoke) {
     _Header 'Smoke -- real /watch'
-    $smokeScript = Join-Path $testsRoot 'integration\Run-Smoke.ps1'
+    $smokeScript = Join-Path $testsRoot 'integration/Run-Smoke.ps1'
     if (Test-Path -LiteralPath $smokeScript) {
         & $smokeScript -PluginRoot $pluginRoot
         $summary.smoke = ($LASTEXITCODE -eq 0)

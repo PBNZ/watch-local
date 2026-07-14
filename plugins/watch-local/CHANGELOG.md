@@ -2,6 +2,84 @@
 
 ## [Unreleased]
 
+## 0.5.0-rc.1 -- 2026-07-14
+
+**BREAKING: Docker removed.** The plugin now provisions its own fully
+portable runtime instead of building/running containers. Motivation:
+Docker Desktop's licensing makes it unavailable on many work machines,
+and containers were only ever a means to "install nothing on the host,
+leave nothing behind" -- which the portable runtime does better.
+
+### Changed
+- **All workers run natively.** `/watch-setup` downloads pinned portable
+  binaries (yt-dlp standalone, gyan.dev/BtbN/evermeet static ffmpeg, deno,
+  uv) plus a uv-managed CPython venv with faster-whisper into
+  `<state root>\runtime\`. Every download is sha256-verified against
+  `scripts/runtime-manifest.json`. Nothing touches system PATH, the
+  registry, or Program Files (`uv python install --no-bin --no-registry`;
+  `UV_CACHE_DIR`/`DENO_DIR` pinned inside the runtime dir). Deleting the
+  state root removes every trace.
+- **GPU whisper via pip CUDA wheels.** faster-whisper/CTranslate2 runs
+  CUDA/float16 natively using the `nvidia-cublas-cu12` + `nvidia-cudnn-cu12`
+  win_amd64 wheels (new `worker/cuda_paths.py` registers the DLL dirs
+  before import). Verified on Blackwell sm_120: native GPU transcription
+  measured ~26% FASTER than the Docker path on the same audio (73.5s vs
+  99.2s wall, 97.4% word overlap on large-v3).
+- **GPU detection is native.** `Test-WLGpuNative` probes host `nvidia-smi`
+  + an NVDEC decode test through the portable ffmpeg. New gpu-block field
+  `cuda_whisper` (venv-level CUDA availability); a GPU whose CUDA wheels
+  fail degrades whisper to cpu/int8 instead of failing the run. Docker-era
+  configs migrate on their first `/watch`.
+- **Path translation removed.** Workers receive the job dir as
+  `W_WORK_DIR` (real host path); `ConvertTo-HostPath` and the
+  `/work` / `/input` / `/models` mount model are gone.
+  `ConvertTo-DockerPath` renamed `ConvertTo-WLSlashPath` (display only).
+- **Exit codes renamed:** 10 `DOCKER_MISSING` -> `RUNTIME_MISSING`,
+  11 `DOCKER_DOWN` -> `RUNTIME_BROKEN`. `setup.ps1 -Check` codes:
+  2 = runtime not provisioned, 4 = runtime incomplete, 5 = marker missing
+  (3 retired).
+- **grab-frames on UNC-source jobs now works** -- native ffmpeg reads
+  `\\server\share` paths directly (Docker could not mount them after the
+  staged copy was gone).
+
+### Added
+- `scripts/_runtime.ps1` -- provisioning (`Install-WLRuntime`), status
+  (`Test-WLRuntime` / `Assert-WLRuntimeReady`), native worker invocation
+  (`Invoke-WLWorker` / `Invoke-WLWorkerCapture`), GPU probes.
+- `scripts/runtime-manifest.json` -- pinned versions, per-platform URLs
+  (win_x64 / linux_x64 / macos_arm64), sha256 hashes.
+- `setup.ps1 -UpdateRuntime` (re-converge to manifest pins / repair) and
+  `setup.ps1 -UpdateYtDlp` (yt-dlp self-update for YouTube breakage).
+- `setup.ps1 -ListJobs` reports the runtime's disk footprint.
+- **Both launcher engines + Linux tested.** Child-process tests (Purge,
+  GrabFrames, smoke) now spawn the same engine that runs the suite instead
+  of hardcoding `powershell.exe`; the whole suite is path/sandbox-portable
+  (XDG redirect, forward-slash literals); CI runs the unit layer under
+  Windows PowerShell 5.1, pwsh-on-Windows, AND pwsh-on-Linux. New
+  `tests/linux/` dev harness (Dockerfile + runner -- build-machine tooling
+  only, the plugin still needs no Docker) runs the full suite on Ubuntu
+  including REAL cold-install linux_x64 runtime provisioning, integration,
+  and a live /watch smoke -- all verified green. Fixes found on the way:
+  Pester pinned to 5.x (6.0.0 fails to import on Linux pwsh), python3
+  fallback in run-tests.ps1, and a Docker-Desktop-broken-DNS fallback in
+  the harness.
+- **Clear "PowerShell 7 missing" error on Linux/macOS.** The SessionStart
+  hook is now a Node script (`check-setup.mjs`) instead of PowerShell --
+  the old `powershell.exe` hook command failed outright on non-Windows
+  hosts, and a missing `pwsh` surfaced only as a raw "command not found".
+  The hook now tells the user exactly how to install PowerShell 7 (which
+  is NOT preinstalled on Linux/macOS); SKILL.md and the command docs carry
+  the same preflight guidance for the launcher invocations.
+
+### Removed
+- `docker/` (both whisper Dockerfiles, Dockerfile.tools,
+  docker-compose.yml), `Assert-DockerReady`, `Invoke-WLDocker`,
+  `Invoke-WLCompose`, `Invoke-WLRun`, docker `Test-WLGpu`,
+  `Get-WLToolsGpuFlags`, `Get-WLWhisperImage`, `Get-WLWhisperRunFlags`,
+  `ConvertTo-HostPath`, image-tag constants. The WSL2
+  `docker compose run` deadlock workaround is obsolete along with its
+  cause.
+
 ## 0.4.0-rc.1 -- 2026-07-14
 
 GPU auto-detection, NVDEC-accelerated decode, and a fully working

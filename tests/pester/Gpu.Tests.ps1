@@ -1,13 +1,14 @@
-# Pester tests for GPU detection / mode-selection helpers in scripts/_lib.ps1.
+# Pester tests for GPU detection / mode-selection helpers in scripts/_lib.ps1
+# and scripts/_runtime.ps1.
 #
 # Run:   Invoke-Pester -Path tests/pester/Gpu.Tests.ps1
 #
-# Pester 5 syntax. No docker required -- these cover the pure helpers;
-# Test-WLGpu itself (docker probe) is exercised by the integration layer.
+# Pester 5 syntax. No provisioned runtime required -- these cover the pure
+# helpers; Test-WLGpuNative itself is exercised by the integration layer.
 
 BeforeAll {
-    $script:Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).ProviderPath
-    $script:LibPath = Join-Path $Root 'plugins\watch-local\scripts\_lib.ps1'
+    $script:Root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).ProviderPath
+    $script:LibPath = Join-Path $Root 'plugins/watch-local/scripts/_lib.ps1'
     . $script:LibPath
 }
 
@@ -34,54 +35,62 @@ Describe 'ConvertFrom-WLGpuProbe' {
     }
 }
 
-Describe 'Whisper mode selection' {
-    It 'GPU mode uses the CUDA image' {
-        Get-WLWhisperImage -GpuPresent $true | Should -Be 'watch-local/whisper:cu128'
+Describe 'Whisper worker env selection' {
+    BeforeEach {
+        # A real (Pester-managed) dir: Join-Path on Linux pwsh validates
+        # drive qualifiers, so a literal 'C:\m' throws there.
+        $script:modelsRoot = Join-Path $TestDrive 'models'
     }
 
-    It 'CPU mode uses the CPU image' {
-        Get-WLWhisperImage -GpuPresent $false | Should -Be 'watch-local/whisper:cpu'
+    It 'GPU with working CUDA whisper gets cuda/float16 + HF_HOME under models root' {
+        $gpu = [pscustomobject]@{ present = $true; cuda_whisper = $true }
+        $v = Get-WLWhisperWorkerEnv -Gpu $gpu -ModelsRoot $modelsRoot
+        $v.W_DEVICE  | Should -Be 'cuda'
+        $v.W_COMPUTE | Should -Be 'float16'
+        $v.HF_HOME   | Should -Be (Join-Path $modelsRoot 'hf-cache')
     }
 
-    It 'GPU mode flags request the GPU and keep the model cache env' {
-        $f = Get-WLWhisperRunFlags -GpuPresent $true
-        $f | Should -Contain '--gpus'
-        $f | Should -Contain 'HF_HOME=/models/hf-cache'
-        $f | Should -Not -Contain 'W_DEVICE=cpu'
+    It 'no GPU gets cpu/int8' {
+        $gpu = [pscustomobject]@{ present = $false; cuda_whisper = $false }
+        $v = Get-WLWhisperWorkerEnv -Gpu $gpu -ModelsRoot $modelsRoot
+        $v.W_DEVICE  | Should -Be 'cpu'
+        $v.W_COMPUTE | Should -Be 'int8'
+        $v.HF_HOME   | Should -Be (Join-Path $modelsRoot 'hf-cache')
     }
 
-    It 'CPU mode flags request no GPU and force cpu/int8' {
-        $f = Get-WLWhisperRunFlags -GpuPresent $false
-        $f | Should -Not -Contain '--gpus'
-        $f | Should -Contain 'W_DEVICE=cpu'
-        $f | Should -Contain 'W_COMPUTE=int8'
-        $f | Should -Contain 'HF_HOME=/models/hf-cache'
+    It 'GPU whose CUDA wheels do not load degrades to cpu/int8 (present=true, cuda_whisper=false)' {
+        $gpu = [pscustomobject]@{ present = $true; cuda_whisper = $false }
+        $v = Get-WLWhisperWorkerEnv -Gpu $gpu -ModelsRoot $modelsRoot
+        $v.W_DEVICE  | Should -Be 'cpu'
+        $v.W_COMPUTE | Should -Be 'int8'
+    }
+
+    It 'tolerates a gpu object missing cuda_whisper (docker-era config) -> cpu' {
+        $gpu = [pscustomobject]@{ present = $true; nvdec = $true }
+        (Get-WLWhisperWorkerEnv -Gpu $gpu -ModelsRoot $modelsRoot).W_DEVICE | Should -Be 'cpu'
     }
 }
 
-Describe 'Tools GPU flags (NVDEC decode)' {
-    It 'GPU with NVDEC gets gpu flags + W_HWACCEL' {
+Describe 'Tools worker env (NVDEC decode)' {
+    It 'GPU with NVDEC gets W_HWACCEL=cuda' {
         $gpu = [pscustomobject]@{ present = $true; nvdec = $true }
-        $f = Get-WLToolsGpuFlags -Gpu $gpu
-        $f | Should -Contain '--gpus'
-        $f | Should -Contain 'W_HWACCEL=cuda'
-        ($f -join ' ') | Should -Match 'NVIDIA_DRIVER_CAPABILITIES='
+        (Get-WLToolsWorkerEnv -Gpu $gpu).W_HWACCEL | Should -Be 'cuda'
     }
 
-    It 'GPU without NVDEC gets no flags' {
+    It 'GPU without NVDEC gets no hwaccel env' {
         $gpu = [pscustomobject]@{ present = $true; nvdec = $false }
-        Get-WLToolsGpuFlags -Gpu $gpu | Should -BeNullOrEmpty
+        (Get-WLToolsWorkerEnv -Gpu $gpu).Count | Should -Be 0
     }
 
-    It 'no GPU gets no flags' {
+    It 'no GPU gets no hwaccel env' {
         $gpu = [pscustomobject]@{ present = $false; nvdec = $false }
-        Get-WLToolsGpuFlags -Gpu $gpu | Should -BeNullOrEmpty
-        Get-WLToolsGpuFlags -Gpu $null | Should -BeNullOrEmpty
+        (Get-WLToolsWorkerEnv -Gpu $gpu).Count | Should -Be 0
+        (Get-WLToolsWorkerEnv -Gpu $null).Count | Should -Be 0
     }
 
     It 'tolerates a gpu object missing the nvdec property (pre-upgrade config)' {
         $gpu = [pscustomobject]@{ present = $true }
-        Get-WLToolsGpuFlags -Gpu $gpu | Should -BeNullOrEmpty
+        (Get-WLToolsWorkerEnv -Gpu $gpu).Count | Should -Be 0
     }
 }
 

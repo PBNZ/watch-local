@@ -5,12 +5,15 @@
 
 .DESCRIPTION
     Steps (each is preview + optional skip):
-        1. Verify Docker + GPU.
+        1. Provision portable runtime binaries + GPU detection.
         2. Show / confirm config locations (jobs_root, models_root, staging_root).
         3. Pick whisper model. Default = large-v3 (best quality, ~3 GB pull).
-        4. Build images + warm model cache (delegates to setup.ps1).
+        4. Install python/venv + warm model cache (delegates to setup.ps1).
         5. Smoke test against a known-short public video.
         6. Print "you're ready" summary.
+
+    No Docker, no admin rights: everything lands under the watch-local
+    state root and is removed by deleting that one folder.
 
     Non-interactive: pass -Yes to accept every default and skip the smoke
     test prompt.
@@ -84,27 +87,18 @@ function _RunChild([string]$scriptPath, [string[]]$childArgs) {
 Write-Output ''
 Write-Output '# /watch-setup -- watch-local onboarding'
 Write-Output ''
-Write-Output 'This walks you through first-time setup of watch-local. The slow steps'
-Write-Output 'are the whisper image build and the model download; both run once.'
+Write-Output 'This walks you through first-time setup of watch-local. Everything is'
+Write-Output 'downloaded into the watch-local state folder -- no Docker, no admin'
+Write-Output 'rights, nothing on system PATH. Delete that one folder to remove it all.'
 Write-Output ''
 
-#region Step1_Docker
-Write-Output '## Step 1: Docker + GPU detection'
-if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
-    Write-Err 'docker CLI not on PATH. Install Docker (Desktop on Windows/macOS, Engine on Linux): https://docs.docker.com/get-docker/'
-    exit $script:WL_EXIT.DOCKER_MISSING
-}
-& docker info 2>$null | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    Write-Err 'Docker daemon not responding. Start Docker (Desktop) and re-run /watch-setup.'
-    exit $script:WL_EXIT.DOCKER_DOWN
-}
-Write-Output 'Docker CLI + daemon -- OK'
-
-Write-Output 'Detecting NVIDIA GPU (builds the small tools image first if needed)...'
+#region Step1_Runtime
+Write-Output '## Step 1: Portable runtime + GPU detection'
+Write-Output 'Downloading pinned portable tools (~190 MB: yt-dlp, ffmpeg, deno, uv)'
+Write-Output 'and probing for an NVIDIA GPU...'
 $code = _RunChild $setupScript @('-DetectGpu')
 if ($code -ne 0) {
-    Write-Err "GPU detection failed (exit $code) -- fix docker and re-run /watch-setup."
+    Write-Err "runtime provisioning / GPU detection failed (exit $code) -- check the output above and re-run /watch-setup."
     exit $code
 }
 $cfg = Get-WLConfig
@@ -113,11 +107,11 @@ $gpuPresent = [bool](Get-WLObjectProp $gpu 'present')
 if ($gpuPresent) {
     $nvdecTxt = if (Get-WLObjectProp $gpu 'nvdec') { 'NVDEC video decode available' } else { 'no NVDEC (CPU decode)' }
     Write-Output ("GPU mode: {0} ({1} MB VRAM, {2})" -f (Get-WLObjectProp $gpu 'name'), (Get-WLObjectProp $gpu 'vram_mb'), $nvdecTxt)
+    Write-Output 'Note: GPU whisper adds a one-time ~1.3 GB CUDA library download in step 4.'
 } else {
-    Write-Output 'CPU-only mode: no NVIDIA GPU visible to Docker.'
+    Write-Output 'CPU-only mode: no NVIDIA GPU detected on this machine.'
     Write-Output 'Everything still works -- transcription runs on CPU (int8), just slower.'
-    Write-Output 'If this machine DOES have an NVIDIA GPU: install the latest driver, enable the'
-    Write-Output 'WSL2 backend in Docker Desktop (Windows) or the NVIDIA Container Toolkit (Linux),'
+    Write-Output 'If this machine DOES have an NVIDIA GPU: install the latest NVIDIA driver,'
     Write-Output "then re-run /watch-setup (or: setup.ps1 -DetectGpu)."
 }
 Write-Output ''
@@ -166,10 +160,10 @@ Write-Output "default_model = $pickedModel"
 Write-Output ''
 #endregion
 
-#region Step4_Build
-Write-Output '## Step 4: Build images + warm model cache'
-$buildNote = if ($gpuPresent) { 'whisper CUDA image ~5-15 min' } else { 'whisper CPU image ~2-5 min' }
-Write-Output "First build is the slow part ($buildNote, then the model pull)."
+#region Step4_Install
+Write-Output '## Step 4: Install whisper runtime + warm model cache'
+$buildNote = if ($gpuPresent) { 'Python + whisper CUDA stack ~1.5 GB' } else { 'Python + whisper CPU stack ~100 MB' }
+Write-Output "Downloads on this step: $buildNote, then the model pull."
 $go = _PromptYN 'Proceed?' $true
 if (-not $go) {
     Write-Err 'cancelled.'
