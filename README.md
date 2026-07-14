@@ -21,9 +21,9 @@ runs in a fully working CPU-only mode. No cloud API keys.
 <!-- state:begin keys=overall_status,gpu_support,platform_support -->
 | Fact | Value | As of |
 |---|---|---|
-| Release status | 0.4.0-rc.1 pre-release (release candidate) | 2026-07-14 |
-| GPU / compute support | auto-detected -- NVDEC decode + CUDA whisper on NVIDIA GPUs, CPU-only fallback (int8) otherwise | 2026-07-14 |
-| Host platform support | Windows 11 (primary, best-tested); Linux/macOS via PowerShell 7, CPU mode (newer, less tested) | 2026-07-14 |
+| Release status | 0.4.0-rc.1 pre-release (release candidate) | 2026-07-13 |
+| GPU / compute support | auto-detected -- NVDEC decode + CUDA whisper on NVIDIA GPUs, CPU-only fallback (int8) otherwise | 2026-07-13 |
+| Host platform support | Windows 11 (primary, best-tested); Linux/macOS via PowerShell 7, CPU mode (newer, less tested) | 2026-07-13 |
 <!-- state:end -->
 
 ## What's in the box
