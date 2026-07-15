@@ -9,10 +9,10 @@ Run the onboarding wizard. The wizard is interactive by default; pass `-Yes` for
 Command:
 
 ```bash
-powershell.exe -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/onboarding.ps1" $ARGUMENTS
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/onboarding.ps1" $ARGUMENTS
 ```
 
-(On Linux/macOS use `pwsh` instead of `powershell.exe -ExecutionPolicy Bypass`.
+(On Linux/macOS use `pwsh -NoProfile` instead of `powershell.exe -NoProfile -ExecutionPolicy Bypass`.
 PowerShell 7 is NOT preinstalled there -- if `pwsh` is not on PATH, stop and
 tell the user to install it first: macOS `brew install powershell`; Linux via
 the Microsoft package repo or `sudo snap install powershell --classic`; all

@@ -18,10 +18,10 @@ Parse $ARGUMENTS:
 Then run:
 
 ```bash
-powershell.exe -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/grab-frames.ps1" -Slug <slug-or-last> -Screenshots "<timestamps>" [-Resolution <N>]
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/grab-frames.ps1" -Slug <slug-or-last> -Screenshots "<timestamps>" [-Resolution <N>]
 ```
 
-(On Linux/macOS use `pwsh` instead of `powershell.exe -ExecutionPolicy Bypass`.
+(On Linux/macOS use `pwsh -NoProfile` instead of `powershell.exe -NoProfile -ExecutionPolicy Bypass`.
 If `pwsh` is not on PATH, stop and follow the PowerShell 7 install guidance in
 SKILL.md's invocation note.)
 

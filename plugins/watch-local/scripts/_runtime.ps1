@@ -101,7 +101,7 @@ function Get-WLPinnedFile {
     } finally {
         $ProgressPreference = $origProgress
     }
-    $actual = (Get-FileHash -LiteralPath $Dest -Algorithm SHA256).Hash.ToLower()
+    $actual = Get-WLFileSHA256 $Dest
     if ($actual -ne $Sha256.ToLower()) {
         Remove-Item -LiteralPath $Dest -Force -ErrorAction SilentlyContinue
         throw "sha256 mismatch for $Url`n  expected $Sha256`n  actual   $actual"
@@ -558,7 +558,13 @@ function Get-WLWhisperWorkerEnv {
     param($Gpu, [Parameter(Mandatory)][string]$ModelsRoot)
     $present = Get-WLObjectProp $Gpu 'present'
     $cudaWhisper = Get-WLObjectProp $Gpu 'cuda_whisper'
-    $vars = @{ HF_HOME = (Join-Path $ModelsRoot 'hf-cache') }
+    # Symlink warning off: without Windows Developer Mode huggingface_hub
+    # falls back to a copy-based cache and prints an alarming (harmless)
+    # warning on every model load.
+    $vars = @{
+        HF_HOME                         = (Join-Path $ModelsRoot 'hf-cache')
+        HF_HUB_DISABLE_SYMLINKS_WARNING = '1'
+    }
     if ($present -and $cudaWhisper) {
         $vars.W_DEVICE = 'cuda'
         $vars.W_COMPUTE = 'float16'

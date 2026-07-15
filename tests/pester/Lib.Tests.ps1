@@ -149,6 +149,67 @@ Describe 'Partial SHA helper' {
     }
 }
 
+Describe 'Full-file SHA256 helper (Get-WLFileSHA256)' {
+    # Backs Get-WLPinnedFile's download verification -- replaced
+    # Get-FileHash, which a polluted PSModulePath can make unresolvable
+    # under Windows PowerShell 5.1.
+    It 'matches the known SHA256 of a fixed input' {
+        $f = Join-Path $TestDrive 'sha-vector.txt'
+        [System.IO.File]::WriteAllText($f, 'hello world')
+        Get-WLFileSHA256 $f | Should -Be 'b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9'
+    }
+
+    It 'throws for a missing file (verification must not silently pass)' {
+        { Get-WLFileSHA256 (Join-Path $TestDrive 'does-not-exist.bin') } | Should -Throw
+    }
+}
+
+Describe 'Child spawn helper (Invoke-WLChild)' {
+    # Regression for the 0.5.0-rc.1 onboarding -Yes failure: the child's
+    # stdout leaked onto the helper's pipeline, so callers received
+    # @(<stdout lines>, <exit code>) and `$code -ne 0` element-filtered
+    # that array to a truthy non-empty collection even on success.
+    BeforeAll {
+        $script:childDir = Join-Path $TestDrive 'child-spawn'
+        New-Item -ItemType Directory -Force -Path $childDir | Out-Null
+
+        # Mirrors setup.ps1 -DetectGpu: JSON on stdout, then exit 0.
+        $script:okChild = Join-Path $childDir 'ok.ps1'
+        Set-Content -LiteralPath $okChild -Value @'
+@{ present = $false } | ConvertTo-Json | Write-Output
+exit 0
+'@
+
+        $script:failChild = Join-Path $childDir 'fail.ps1'
+        Set-Content -LiteralPath $failChild -Value @'
+Write-Output 'some stdout noise'
+exit 7
+'@
+    }
+
+    It 'returns scalar 0 for a stdout-writing child that succeeds' {
+        $code = Invoke-WLChild $okChild
+        $code | Should -BeOfType [int]
+        $code | Should -Be 0
+        ($code -ne 0) | Should -BeFalse
+    }
+
+    It 'returns the scalar exit code for a stdout-writing child that fails' {
+        $code = Invoke-WLChild $failChild
+        $code | Should -BeOfType [int]
+        $code | Should -Be 7
+    }
+
+    It 'passes child args through' {
+        $argChild = Join-Path $childDir 'args.ps1'
+        Set-Content -LiteralPath $argChild -Value @'
+param([int]$Code)
+exit $Code
+'@
+        Invoke-WLChild $argChild @('-Code', '5') | Should -Be 5
+    }
+}
+
 Describe 'Config helpers' {
     BeforeAll {
         $script:origConfig = $script:WL_CONFIG_FILE

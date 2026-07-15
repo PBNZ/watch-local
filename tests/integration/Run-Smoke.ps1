@@ -29,7 +29,7 @@ try {
     # Same engine as the runner: powershell.exe when invoked from 5.1, pwsh
     # when invoked from PowerShell 7 (and on Linux/macOS).
     $engine = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh' } else { 'powershell.exe' }
-    $output = & $engine -ExecutionPolicy Bypass -File $watch `
+    $output = & $engine -NoProfile -ExecutionPolicy Bypass -File $watch `
         -Source $Url -MaxFrames 4 -Model tiny -NoCompare -OutDir $tmp 2>&1 |
         Out-String
 

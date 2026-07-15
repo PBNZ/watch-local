@@ -24,9 +24,12 @@ The report's **Compute** line states which mode a run used. After
 driver/hardware changes, re-detect with `setup.ps1 -DetectGpu`.
 
 **Invocation note:** examples below use `powershell.exe` (Windows, ships
-with the OS). On Linux/macOS hosts, replace
-`powershell.exe -ExecutionPolicy Bypass` with `pwsh` -- the scripts run on
-PowerShell 7 on any OS (CPU mode). PowerShell 7 is NOT preinstalled on
+with the OS). Always pass `-NoProfile` -- user profiles print noise and
+start background tasks in the captured output. On Linux/macOS hosts,
+replace `powershell.exe -NoProfile -ExecutionPolicy Bypass` with
+`pwsh -NoProfile` -- the scripts run on PowerShell 7 on any OS (CPU mode).
+`pwsh -NoProfile` is also a supported engine on Windows when it is
+installed. PowerShell 7 is NOT preinstalled on
 Linux/macOS: before the first invocation on those hosts, check
 `command -v pwsh`. If it is missing, STOP and tell the user this plugin's
 launcher needs PowerShell 7, with the fix:
@@ -44,7 +47,7 @@ some other way) -- installing pwsh is the supported path.
 Run before every `/watch` invocation:
 
 ```bash
-powershell.exe -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/setup.ps1" -Check
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/setup.ps1" -Check
 ```
 
 Exit 0 = ready. **Emit nothing -- proceed to Step 1 silently.**
@@ -77,7 +80,7 @@ before kicking it off.
 **Step 2 -- run the launcher.**
 
 ```bash
-powershell.exe -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/watch.ps1" -Source "<source>" [flags]
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/watch.ps1" -Source "<source>" [flags]
 ```
 
 Optional flags (PowerShell named params -- pass as `-Name Value`):
@@ -114,9 +117,9 @@ For zero-footprint + visual analysis, run WITHOUT `-Cleanup`, Read the
 frames, then delete the job:
 
 ```bash
-powershell.exe -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/setup.ps1" -PurgeJob -Slug <slug>
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/setup.ps1" -PurgeJob -Slug <slug>
 # prints a preview + confirm token, then:
-powershell.exe -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/setup.ps1" -PurgeJob -Slug <slug> -JobConfirmToken <token>
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/setup.ps1" -PurgeJob -Slug <slug> -JobConfirmToken <token>
 ```
 
 (`-Cleanup -SaveHere` together also works: the report lists the promoted
@@ -184,6 +187,13 @@ indefinitely. They are NOT cleaned up automatically. User can:
 - **Flag conflict (exit 22)** -> `-OutDir` + `-SaveHere` both set --
   pick one.
 - **Long video warning** -> offer `-Start`/`-End`.
+- **"`Get-FileHash` (or another cmdlet) is not recognized" under
+  `powershell.exe`** -> the Windows PowerShell 5.1 module path is polluted
+  with PowerShell 7 module directories, which shadow built-in modules with
+  incompatible copies. The scripts no longer depend on `Get-FileHash`, and
+  child spawns fall back to `pwsh` automatically when 5.1 cannot resolve
+  required cmdlets -- but if a top-level run still hits this, invoke the
+  launcher with `pwsh -NoProfile` instead of `powershell.exe`.
 - **Download fails** -> yt-dlp stderr forwarded; login-required or
   region-locked -> tell the user, don't retry. If YouTube downloads
   suddenly break across videos, suggest `setup.ps1 -UpdateYtDlp`

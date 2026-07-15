@@ -68,20 +68,8 @@ function _PromptYN([string]$prompt, [bool]$default) {
     return ($reply.Trim().ToLower() -in @('y','yes'))
 }
 
-# Spawn a child script with the same engine that runs us (powershell.exe /
-# pwsh), with EAP lowered so native stderr doesn't terminate the wizard.
-function _RunChild([string]$scriptPath, [string[]]$childArgs) {
-    $engine = Get-WLPSEngine
-    $flags = @('-NoProfile')
-    if ($script:WL_IS_WINDOWS) { $flags += @('-ExecutionPolicy', 'Bypass') }
-    $_eapOrig = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-    try {
-        & $engine @flags -File $scriptPath @childArgs
-        return $LASTEXITCODE
-    } finally {
-        $ErrorActionPreference = $_eapOrig
-    }
-}
+# Child spawns go through _lib's Invoke-WLChild: scalar exit code only,
+# child stdout stays off this function's pipeline (see _lib.ps1).
 #endregion
 
 Write-Output ''
@@ -96,7 +84,7 @@ Write-Output ''
 Write-Output '## Step 1: Portable runtime + GPU detection'
 Write-Output 'Downloading pinned portable tools (~190 MB: yt-dlp, ffmpeg, deno, uv)'
 Write-Output 'and probing for an NVIDIA GPU...'
-$code = _RunChild $setupScript @('-DetectGpu')
+$code = [int](Invoke-WLChild $setupScript @('-DetectGpu'))
 if ($code -ne 0) {
     Write-Err "runtime provisioning / GPU detection failed (exit $code) -- check the output above and re-run /watch-setup."
     exit $code
@@ -169,7 +157,7 @@ if (-not $go) {
     Write-Err 'cancelled.'
     exit 0
 }
-$setupCode = _RunChild $setupScript @('-Model', $pickedModel)
+$setupCode = [int](Invoke-WLChild $setupScript @('-Model', $pickedModel))
 if ($setupCode -ne 0) {
     Write-Err "setup.ps1 failed (exit $setupCode) -- fix and re-run /watch-setup."
     exit $setupCode
@@ -184,7 +172,7 @@ if (-not $SkipSmoke -and -not $Yes) {
         Write-Output '## Step 5: Smoke test'
         # Short, captions-bearing, very low-risk URL. Brad's own /watch demo.
         $smokeUrl = 'https://www.youtube.com/watch?v=QZMljuD10sU'
-        $smokeCode = _RunChild $watchScript @('-Source', $smokeUrl, '-MaxFrames', '4', '-NoCompare')
+        $smokeCode = [int](Invoke-WLChild $watchScript @('-Source', $smokeUrl, '-MaxFrames', '4', '-NoCompare'))
         if ($smokeCode -ne 0) {
             Write-Warn "smoke test exited $smokeCode -- inspect output above."
         } else {

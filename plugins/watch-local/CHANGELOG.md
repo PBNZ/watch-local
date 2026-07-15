@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+### Fixed
+- **`/watch-setup -Yes` (non-interactive onboarding) failed at Step 1 on
+  every machine.** The wizard's child-spawn helper returned the child's
+  stdout AND its exit code on one pipeline; `setup.ps1 -DetectGpu` always
+  prints a JSON gpu block, so the "exit code" arrived as an array, the
+  `-ne 0` guard element-filtered it to a truthy collection, and the wizard
+  aborted (with a garbled `exit { ...json... } 0` message) before writing
+  the setup marker -- even when detection succeeded, on GPU and CPU
+  machines alike. Child spawns now go through `_lib.ps1`'s new
+  `Invoke-WLChild`, which sends child stdout to the host and returns only
+  a scalar `[int]` exit code (Pester regression tests added).
+- **Runtime provisioning died with "`Get-FileHash` is not recognized"
+  under `powershell.exe` on hosts with a polluted `PSModulePath`** (PS7
+  module dirs listed on the 5.1 path shadow the built-in Utility module
+  with the incompatible PS7 copy). Download verification now hashes via
+  .NET (`Get-WLFileSHA256`, no module dependency), and `Get-WLPSEngine`
+  falls back to `pwsh` for child spawns when 5.1 cannot resolve
+  `Get-FileHash` / `Expand-Archive`.
+- Silenced the harmless-but-alarming huggingface_hub cache-symlink warning
+  (Windows without Developer Mode) via `HF_HUB_DISABLE_SYMLINKS_WARNING=1`
+  in the whisper worker env.
+
+### Changed
+- All documented launcher invocations (SKILL.md, command docs, smoke
+  harness) now pass `-NoProfile` -- user profiles printed noise and
+  started background tasks inside captured setup output. New SKILL.md
+  troubleshooting entry covers the polluted-`PSModulePath` failure mode
+  and `pwsh -NoProfile` as a supported engine on Windows.
+
 ## 0.5.0-rc.1 -- 2026-07-14
 
 **BREAKING: Docker removed.** The plugin now provisions its own fully

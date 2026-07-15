@@ -451,6 +451,20 @@ function Get-PartialSHA256([string]$path, [int]$bytes = 65536) {
     }
 }
 
+# Full-file SHA256 as lowercase hex via .NET -- deliberately NOT the
+# Get-FileHash cmdlet, which a polluted PSModulePath (PS7 module dirs
+# shadowing the 5.1 Utility module) can make unresolvable under Windows
+# PowerShell 5.1. The .NET path needs no module. Throws on a missing /
+# unreadable file: callers verify downloads and must not get $null back.
+function Get-WLFileSHA256([string]$path) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $stream = [System.IO.File]::OpenRead($path)
+        try { $bytes = $sha.ComputeHash($stream) } finally { $stream.Dispose() }
+    } finally { $sha.Dispose() }
+    return (($bytes | ForEach-Object { $_.ToString('x2') }) -join '')
+}
+
 # Read a UTF-8 file regardless of BOM.
 function Read-UTF8 ([string]$path) {
     return [System.IO.File]::ReadAllText($path, [System.Text.UTF8Encoding]::new($false, $false))
@@ -458,9 +472,41 @@ function Read-UTF8 ([string]$path) {
 
 # Engine to spawn child PowerShell scripts with: the one running us.
 # Windows PowerShell 5.1 -> powershell.exe; PowerShell 7+ (any OS) -> pwsh.
+# Broken-engine escape hatch: PS7 module dirs on the 5.1 PSModulePath can
+# shadow Microsoft.PowerShell.Utility/Archive with the (incompatible)
+# PS7 copies, leaving cmdlets like Get-FileHash / Expand-Archive
+# unresolvable under 5.1. When this process can't see them but pwsh is
+# installed, spawn children with pwsh instead.
 function Get-WLPSEngine {
     if ($PSVersionTable.PSEdition -eq 'Core') { return 'pwsh' }
+    if (-not ((Get-Command Get-FileHash -ErrorAction SilentlyContinue) -and
+              (Get-Command Expand-Archive -ErrorAction SilentlyContinue))) {
+        if (Get-Command pwsh -ErrorAction SilentlyContinue) { return 'pwsh' }
+    }
     return 'powershell.exe'
+}
+
+# Spawn a child PowerShell script with the engine above and return ONLY
+# its exit code. The child's stdout must go to the host, NOT the caller's
+# pipeline: `& $engine ...` emits every stdout line as pipeline output,
+# and a bare `return $LASTEXITCODE` after it would hand callers an array
+# (stdout lines + code), turning `$code -ne 0` into an element-wise
+# filter. EAP is lowered so native stderr can't terminate the caller.
+function Invoke-WLChild {
+    param(
+        [Parameter(Mandatory)][string]$ScriptPath,
+        [string[]]$ChildArgs = @()
+    )
+    $engine = Get-WLPSEngine
+    $flags = @('-NoProfile')
+    if ($script:WL_IS_WINDOWS) { $flags += @('-ExecutionPolicy', 'Bypass') }
+    $orig = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+        & $engine @flags -File $ScriptPath @ChildArgs | Out-Host
+        return [int]$LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $orig
+    }
 }
 
 #endregion

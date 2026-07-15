@@ -48,6 +48,7 @@ Describe 'Whisper worker env selection' {
         $v.W_DEVICE  | Should -Be 'cuda'
         $v.W_COMPUTE | Should -Be 'float16'
         $v.HF_HOME   | Should -Be (Join-Path $modelsRoot 'hf-cache')
+        $v.HF_HUB_DISABLE_SYMLINKS_WARNING | Should -Be '1'
     }
 
     It 'no GPU gets cpu/int8' {
