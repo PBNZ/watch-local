@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## 0.5.0-rc.2 -- 2026-07-15
+
 ### Fixed
 - **`/watch-setup -Yes` (non-interactive onboarding) failed at Step 1 on
   every machine.** The wizard's child-spawn helper returned the child's

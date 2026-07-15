@@ -23,7 +23,7 @@ mode. No cloud API keys, no admin rights, nothing installed on the system
 <!-- state:begin keys=overall_status,gpu_support,platform_support -->
 | Fact | Value | As of |
 |---|---|---|
-| Release status | 0.5.0-rc.1 pre-release (release candidate) | 2026-07-14 |
+| Release status | 0.5.0-rc.2 pre-release (release candidate) | 2026-07-15 |
 | GPU / compute support | auto-detected -- NVDEC decode + CUDA whisper on NVIDIA GPUs, CPU-only fallback (int8) otherwise | 2026-07-14 |
 | Host platform support | Windows 11 (primary, best-tested); Linux x64 / macOS arm64 via PowerShell 7, CPU mode (newer, less tested) | 2026-07-14 |
 <!-- state:end -->
