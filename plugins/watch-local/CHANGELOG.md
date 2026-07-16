@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## 0.5.0 -- 2026-07-16
+
+Promoted `0.5.0-rc.2` to a stable release. No functional changes since the
+release candidate -- see the `0.5.0-rc.1` / `0.5.0-rc.2` entries below for
+everything that landed in this line.
+
 ## 0.5.0-rc.2 -- 2026-07-15
 
 ### Fixed

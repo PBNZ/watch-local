@@ -27,7 +27,7 @@ mode. No cloud API keys, no admin rights, nothing installed on the system
 <!-- state:begin keys=overall_status,gpu_support,platform_support -->
 | Fact | Value | As of |
 |---|---|---|
-| Release status | 0.5.0-rc.2 pre-release (release candidate) | 2026-07-15 |
+| Release status | 0.5.0 (stable release) | 2026-07-16 |
 | GPU / compute support | auto-detected -- NVDEC decode + CUDA whisper on NVIDIA GPUs, CPU-only fallback (int8) otherwise | 2026-07-14 |
 | Host platform support | Windows 11 (primary, best-tested); Linux x64 / macOS arm64 via PowerShell 7, CPU mode (newer, less tested) | 2026-07-14 |
 <!-- state:end -->
@@ -98,7 +98,8 @@ installs the same canonical plugin from this repo.
 
 ### From the distribution zip (offline / pinned-version installs)
 
-1. Download `watch-local-marketplace-vX.Y.Z.zip` from the release.
+1. Download the latest `watch-local-marketplace-*.zip` from the
+   [Releases page](https://github.com/PBNZ/watch-local/releases/latest).
 2. Extract it into a stable folder, e.g.
    `C:\Users\<you>\plugins\watch-local-marketplace\`.
 3. In Claude Code:

@@ -2,8 +2,8 @@
   "stale_after_days": 0,
   "facts": {
     "overall_status": {
-      "value": "0.5.0-rc.2 pre-release (release candidate)",
-      "as_of": "2026-07-15",
+      "value": "0.5.0 (stable release)",
+      "as_of": "2026-07-16",
       "note": "Release status"
     },
     "gpu_support": {
