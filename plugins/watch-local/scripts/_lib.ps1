@@ -434,6 +434,7 @@ function Request-Confirm {
 # Hash first N bytes of a file. Used in source-link.txt to verify
 # unchanged source without reading huge files end-to-end.
 function Get-PartialSHA256([string]$path, [int]$bytes = 65536) {
+    $sha = $null
     try {
         $stream = [System.IO.File]::OpenRead($path)
         try {
@@ -448,6 +449,8 @@ function Get-PartialSHA256([string]$path, [int]$bytes = 65536) {
     } catch {
         Write-Detail "Get-PartialSHA256 failed: $($_.Exception.Message)"
         return $null
+    } finally {
+        if ($null -ne $sha) { $sha.Dispose() }
     }
 }
 
