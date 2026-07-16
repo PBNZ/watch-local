@@ -1,8 +1,13 @@
+<p align="center">
+  <img src="docs/banner.png" alt="watch-local -- give Claude a video input, fully local (no Docker, no cloud keys)" width="880">
+</p>
+
 # watch-local -- a Claude Code plugin
 
-**Claude can't watch videos. This plugin fixes that: `/watch` any URL,
-local file, or network share and Claude answers from real frames + a
-local Whisper transcript -- 100% on your own hardware, zero cloud keys.**
+**Claude can't watch videos. `watch-local` gives it eyes -- fully local.**
+Point `/watch` at any URL, local file, or network share, and Claude answers
+from real frames and a local Whisper transcript -- 100% on your own hardware,
+zero cloud keys.
 
 **watch-local** is a fully local port of `bradautomates/claude-video`
 that runs faster-whisper natively on a self-contained portable runtime
