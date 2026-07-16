@@ -1,8 +1,12 @@
-# watch-local marketplace
+# watch-local -- a Claude Code plugin
 
-A Claude Code plugin marketplace containing the **watch-local** plugin --
-a fully local port of `bradautomates/claude-video` that runs
-faster-whisper natively on a self-contained portable runtime (no Docker).
+**Claude can't watch videos. This plugin fixes that: `/watch` any URL,
+local file, or network share and Claude answers from real frames + a
+local Whisper transcript -- 100% on your own hardware, zero cloud keys.**
+
+**watch-local** is a fully local port of `bradautomates/claude-video`
+that runs faster-whisper natively on a self-contained portable runtime
+(no Docker).
 It auto-detects your NVIDIA GPU and uses it for both video decode (NVDEC)
 and transcription (CUDA); without one it runs in a fully working CPU-only
 mode. No cloud API keys, no admin rights, nothing installed on the system
@@ -79,7 +83,20 @@ ffmpeg, or Python installed on the host -- the plugin brings its own.
 
 ## Install
 
-### From the distribution zip (recommended for end users)
+### From GitHub (easiest)
+
+```
+/plugin marketplace add PBNZ/watch-local
+/plugin install watch-local@watch-local
+```
+
+Then continue at step 4 below. watch-local is also listed as a reference
+entry in the [`PBNZ/pbnz-skills`](https://github.com/PBNZ/pbnz-skills)
+marketplace -- `/plugin marketplace add PBNZ/pbnz-skills` surfaces all
+PBNZ plugins at once, and `/plugin install watch-local@pbnz-skills`
+installs the same canonical plugin from this repo.
+
+### From the distribution zip (offline / pinned-version installs)
 
 1. Download `watch-local-marketplace-vX.Y.Z.zip` from the release.
 2. Extract it into a stable folder, e.g.
