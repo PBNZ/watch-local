@@ -4,4 +4,9 @@ __pycache__/
 *.pyc
 # Re-include: a global gitignore pattern like '*private*' would otherwise
 # silently drop this CI validator from commits (it did once).
-!scripts/ci/check_no_private_contact.py
+!scripts/ci/check_no_private_contact.py 
+watch-local-output/
+.claude/settings.local.json
+.DS_Store
+Thumbs.db
+

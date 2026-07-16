@@ -6,5 +6,17 @@
     "name": "Peter (port of bradautomates/claude-video)"
   },
   "license": "MIT",
+{
+  "name": "watch-local",
+  "version": "0.5.0",
+  "description": "Let Claude watch a video -- fully local. Downloads with yt-dlp, extracts auto-scaled frames with ffmpeg, ALWAYS transcribes with faster-whisper and compares against creator-provided captions. Auto-detects your NVIDIA GPU: uses it for video decode (NVDEC) and whisper when present, falls back to a fully working CPU-only mode when not. Self-provisioned portable runtime -- no Docker, no system installs, delete one folder to remove everything. Supports URLs, local files, and SMB/UNC paths. No cloud API keys.",
+  "author": {
+    "name": "Peter (port of bradautomates/claude-video)"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/PBNZ/watch-local",
+  "repository": "https://github.com/PBNZ/watch-local",
+  "keywords": ["video", "watch", "youtube", "local", "gpu", "cpu", "cuda", "nvdec", "whisper", "faster-whisper", "yt-dlp", "ffmpeg", "portable", "multimodal", "frames", "windows", "linux"]
+}
   "keywords": ["video", "watch", "youtube", "local", "gpu", "cpu", "cuda", "nvdec", "whisper", "faster-whisper", "yt-dlp", "ffmpeg", "portable", "multimodal", "frames", "windows", "linux"]
 }

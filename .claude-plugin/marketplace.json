@@ -5,7 +5,8 @@
     "version": "0.5.0"
   },
   "owner": {
-    "name": "Peter"
+    "name": "Peter",
+"url": "https://github.com/PBNZ"
   },
   "plugins": [
     {
