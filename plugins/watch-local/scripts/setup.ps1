@@ -23,6 +23,7 @@
         -PurgeJobs -OlderThanDays N [-DryRun] [-ConfirmToken T]
         -PurgeJob -Slug s [-JobConfirmToken T]
         -PurgeAllJobs -Confirm [-AllConfirmToken T]   (also needs env WATCH_LOCAL_I_REALLY_MEAN_IT=1)
+        -PurgeStaging [-StagingConfirmToken T]        (leftover staged UNC copies)
         -RemoveModel -ModelName n
 
     SAFETY: every destructive op only touches paths inside the configured
@@ -95,6 +96,11 @@ param(
     [switch]$Confirm,
     [Parameter(ParameterSetName='PurgeAllJobs')]
     [string]$AllConfirmToken,
+
+    [Parameter(ParameterSetName='PurgeStaging')]
+    [switch]$PurgeStaging,
+    [Parameter(ParameterSetName='PurgeStaging')]
+    [string]$StagingConfirmToken,
 
     [Parameter(ParameterSetName='RemoveModel')]
     [switch]$RemoveModel,
@@ -565,6 +571,33 @@ function _PurgeAllJobsCmd {
 }
 #endregion
 
+#region PurgeStagingCmd
+# Staged UNC copies are transient by design (reclaimed at end-of-run), so
+# anything under staging_root is a leftover from a killed run or an older
+# plugin version -- no age filter; every child dir is a target.
+function _PurgeStagingCmd {
+    $cfg = _EnsureConfig
+    $root = [string]$cfg.staging_root
+    if (-not (Test-Path -LiteralPath $root)) { Write-Output 'staging_root does not exist -- nothing to purge.'; exit 0 }
+    $gathered = _GatherJobDirs -Root $root -OlderThanDays -1
+    $proceed = _PreviewAndConfirm -Scope 'staging' -Root $root `
+        -FilterLabel 'ALL STAGED LEFTOVERS' `
+        -Targets $gathered.Targets -Kept @() `
+        -TokenPrefix 'PURGE-STAGE' -NonInteractiveToken $StagingConfirmToken
+    if (-not $proceed) { Write-Stage 'purge cancelled.'; exit $script:WL_EXIT.PURGE_REFUSED }
+    foreach ($t in $gathered.Targets) {
+        try {
+            Assert-InsideRoot -Target $t.Path -Root $root
+            Remove-Item -LiteralPath $t.Path -Recurse -Force
+            Write-Stage "removed $($t.Path)"
+        } catch {
+            Write-Warn "failed to remove $($t.Path): $($_.Exception.Message)"
+        }
+    }
+    exit 0
+}
+#endregion
+
 #region RemoveModelCmd
 function _RemoveModelCmd {
     if (-not $ModelName) { Write-Err 'specify -ModelName.'; exit $script:WL_EXIT.PURGE_REFUSED }
@@ -611,6 +644,7 @@ switch ($PSCmdlet.ParameterSetName) {
     'PurgeJobs'              { _PurgeJobsCmd }
     'PurgeJob'               { _PurgeJobCmd }
     'PurgeAllJobs'           { _PurgeAllJobsCmd }
+    'PurgeStaging'           { _PurgeStagingCmd }
     'RemoveModel'            { _RemoveModelCmd }
     'Install'                { _Install }
 }

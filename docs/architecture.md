@@ -182,7 +182,7 @@ stderr. No silent failures.
 
 This is enforced both at the per-call level (`-Cleanup`) and at the
 bulk-maintenance level (`-PurgeJobs`, `-PurgeJob`, `-PurgeAllJobs`,
-`-RemoveModel`).
+`-PurgeStaging`, `-RemoveModel`).
 
 ## Exit codes
 

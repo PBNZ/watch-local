@@ -2,7 +2,23 @@
 
 ## [Unreleased]
 
+### Added
+- **`setup.ps1 -PurgeStaging`** (#5): preview + token-confirmed removal
+  of leftover staged UNC copies under `staging_root` (from killed runs or
+  older versions). `/watch`'s `auto_cleanup_days` warning now scans
+  staging leftovers too.
+
 ### Fixed
+- **Staged UNC copies leaked into `%TEMP%` on every failed/early-exit run
+  and the staging free-space check ran after the copy** (#5, #15). The
+  pipeline after staging now runs inside try/finally, so the staged copy
+  is reclaimed on every exit path (runtime checks, disk refusals, tools
+  failures, uncaught throws) -- not just straight-line success; a failed
+  copy removes its partial too. The staging free-space check moved before
+  the copy and is sized from the UNC source. The jobs_root pre-flight no
+  longer demands staged-video-sized space for UNC sources (only frames +
+  audio land there), which previously blocked large NAS videos on
+  split-drive setups.
 - **save-here dropped source-link.txt / `-IncludeSource` for local/UNC
   jobs on the primary (concrete-slug) path** (#4) -- which is what
   `/watch <file> -SaveHere` always uses -- while the report still claimed

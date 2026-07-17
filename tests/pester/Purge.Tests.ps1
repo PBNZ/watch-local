@@ -196,6 +196,25 @@ Describe 'Non-interactive two-run purge flow' {
         Test-Path $dir | Should -BeFalse
     }
 
+    It 'PurgeStaging: preview refuses, confirm run deletes staged leftovers only' {
+        $stagingRoot = Join-Path $S.Sandbox 'staging'
+        $leftover = Join-Path $stagingRoot 'dead-run-slug'
+        New-Item -ItemType Directory -Force -Path $leftover | Out-Null
+        'staged video bytes' | Set-Content -LiteralPath (Join-Path $leftover 'video.mkv')
+        $keepJob = _SeedJob -JobsRoot $S.JobsRoot -Slug 'unrelated-job'
+
+        $out1 = _RunSetup -LocalAppData $S.AppData -ArgList @('-PurgeStaging')
+        $script:_lastCode | Should -Be 60
+        Test-Path $leftover | Should -BeTrue
+        $out1 | Should -Match 'To proceed, type:\s+(PURGE-STAGE-[A-Z2-9]{6})'
+        $token = ([regex]'To proceed, type:\s+(PURGE-STAGE-[A-Z2-9]{6})').Match($out1).Groups[1].Value
+
+        _RunSetup -LocalAppData $S.AppData -ArgList @('-PurgeStaging','-StagingConfirmToken',$token) | Out-Null
+        $script:_lastCode | Should -Be 0
+        Test-Path $leftover | Should -BeFalse
+        Test-Path $keepJob | Should -BeTrue
+    }
+
     It 'token from a different target does not confirm' {
         $dirA = _SeedJob -JobsRoot $S.JobsRoot -Slug 'job-a'
         $dirB = _SeedJob -JobsRoot $S.JobsRoot -Slug 'job-b'

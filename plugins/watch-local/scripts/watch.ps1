@@ -93,6 +93,14 @@ if ($null -ne $config.auto_cleanup_days) {
             Write-Warn ("{0} job dir(s) older than {1} days under {2}. To clean: powershell -File `"{3}\setup.ps1`" -PurgeJobs -OlderThanDays {1}" -f `
                 $oldJobs.Count, [int]$config.auto_cleanup_days, $jobsRoot, $PSScriptRoot)
         }
+        # Staged UNC copies are reclaimed at end-of-run, so anything old
+        # here is a leftover from a killed run or an older version.
+        $oldStages = @(Get-ChildItem -LiteralPath $stagingRoot -Directory -ErrorAction SilentlyContinue |
+                       Where-Object { $_.LastWriteTime -lt $cutoff })
+        if ($oldStages.Count -gt 0) {
+            Write-Warn ("{0} leftover staging dir(s) under {1}. To clean: powershell -File `"{2}\setup.ps1`" -PurgeStaging" -f `
+                $oldStages.Count, $stagingRoot, $PSScriptRoot)
+        }
     } catch {
         Write-Detail "auto_cleanup warning skipped: $($_.Exception.Message)"
     }
@@ -123,6 +131,20 @@ $stagedDir = $null
 $stagedFile = $null
 $originalSourcePath = $null
 
+# Reclaim the staged UNC copy. Called from the whole-pipeline finally at
+# the bottom of this script (so EVERY exit/throw path after staging
+# reclaims it) and from the staging catch itself (partial copies).
+function Remove-WLStagedDir {
+    if ($stagedDir -and (Test-Path -LiteralPath $stagedDir)) {
+        try {
+            Assert-InsideRoot -Target $stagedDir -Root $stagingRoot
+            Remove-Item -LiteralPath $stagedDir -Recurse -Force -ErrorAction SilentlyContinue
+        } catch {
+            Write-Detail "staging cleanup skipped: $($_.Exception.Message)"
+        }
+    }
+}
+
 if ($Source -match '^https?://') {
     $isUrl = $true
     Write-Stage "source is URL"
@@ -136,19 +158,29 @@ if ($Source -match '^https?://') {
         exit $script:WL_EXIT.SOURCE_BAD
     }
     try {
+        $srcItem = Get-Item -LiteralPath $Source
+        $sizeMB = [math]::Round(($srcItem.Length / 1MB), 1)
+        # Free-space check BEFORE the copy -- sized from the UNC source.
+        # (Checking afterwards, as this used to, can only inspect the
+        # damage a full disk already took, never prevent it.)
+        $needGbStage = [math]::Ceiling(($sizeMB + 100) / 1024.0) + $minFreeStaging
+        $freeStageGB = Get-DriveFreeGB $stagingRoot
+        if ($null -ne $freeStageGB -and $freeStageGB -lt $needGbStage) {
+            Write-Err "not enough free space on staging drive for UNC copy: $freeStageGB GB free, need $needGbStage GB."
+            exit $script:WL_EXIT.NO_DISK
+        }
         $jobStage = Join-Path $stagingRoot $slug
         New-Item -ItemType Directory -Force -Path $jobStage | Out-Null
         $fname = Split-Path -Leaf $Source
         $stagedDir = $jobStage
         $stagedFile = Join-Path $jobStage $fname
-        $srcItem = Get-Item -LiteralPath $Source
-        $sizeMB = [math]::Round(($srcItem.Length / 1MB), 1)
         if ($sizeMB -gt 1024) { Write-Warn "source is $sizeMB MB -- copy may take a while" }
         Copy-Item -LiteralPath $Source -Destination $stagedFile -Force
         $workerSource = $stagedFile
         $originalSourcePath = $Source
     } catch {
         Write-Err "UNC stage failed: $($_.Exception.Message)"
+        Remove-WLStagedDir
         exit $script:WL_EXIT.UNC_COPY_FAILED
     }
 } else {
@@ -165,6 +197,14 @@ if ($Source -match '^https?://') {
 }
 
 #endregion
+
+# Everything below runs inside try/finally so the staged UNC copy is
+# reclaimed on EVERY path out of the pipeline -- early exits (runtime
+# checks, disk, tools failures, exits inside dot-sourced helpers) and
+# uncaught throws included, not just straight-line success. PowerShell
+# runs finally blocks when `exit` unwinds the script. The body keeps its
+# original indentation; the matching `} finally {` is at the bottom.
+try {
 
 #region DiskCheck
 
@@ -197,7 +237,10 @@ if ($DryRun) {
         $estimateMB += 500
     }
 } elseif ($stagedFile) {
-    $estimateMB += [int]([math]::Round((Get-Item -LiteralPath $stagedFile).Length / 1MB, 0))
+    # UNC: the video lives in staging_root (checked before the copy above);
+    # jobs_root only receives frames + audio.mp3, so demand a small fixed
+    # reserve instead of the full staged-video size.
+    $estimateMB += 200
 }
 
 $needGbJobs = [math]::Ceiling($estimateMB / 1024.0) + $minFreeJobs
@@ -206,14 +249,6 @@ if ($null -ne $freeJobsGB -and $freeJobsGB -lt $needGbJobs) {
     Write-Err ("not enough free space on jobs_root drive: {0} GB free, need {1} GB (estimate {2} MB + {3} GB reserve)." -f $freeJobsGB, $needGbJobs, $estimateMB, $minFreeJobs)
     Write-Err ("Move jobs_root to another drive: powershell -File `"{0}\setup.ps1`" -SetJobsRoot D:\watch-jobs" -f $PSScriptRoot)
     exit $script:WL_EXIT.NO_DISK
-}
-if ($stagedDir) {
-    $needGbStage = [math]::Ceiling($estimateMB / 1024.0) + $minFreeStaging
-    $freeStageGB = Get-DriveFreeGB $stagingRoot
-    if ($null -ne $freeStageGB -and $freeStageGB -lt $needGbStage) {
-        Write-Err "not enough free space on staging drive for UNC copy: $freeStageGB GB free, need $needGbStage GB."
-        exit $script:WL_EXIT.NO_DISK
-    }
 }
 $modelHasFiles = $false
 if (Test-Path -LiteralPath $modelsDir) {
@@ -727,15 +762,6 @@ if ($SaveHere) {
 
 #region Cleanup
 
-if ($stagedDir -and (Test-Path -LiteralPath $stagedDir)) {
-    try {
-        Assert-InsideRoot -Target $stagedDir -Root $stagingRoot
-        Remove-Item -LiteralPath $stagedDir -Recurse -Force -ErrorAction SilentlyContinue
-    } catch {
-        Write-Detail "staging cleanup skipped: $($_.Exception.Message)"
-    }
-}
-
 if ($Cleanup) {
     if ($OutDir) {
         Write-Warn "-Cleanup ignored when -OutDir is set (scope guard)."
@@ -758,3 +784,8 @@ if ($Cleanup) {
 exit $script:WL_EXIT.OK
 
 #endregion
+
+} finally {
+    # Runs on every path out of the pipeline above, including early exits.
+    Remove-WLStagedDir
+}
