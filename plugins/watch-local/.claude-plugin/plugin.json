@@ -6,5 +6,7 @@
     "name": "Peter (port of bradautomates/claude-video)"
   },
   "license": "MIT",
+  "homepage": "https://github.com/PBNZ/watch-local",
+  "repository": "https://github.com/PBNZ/watch-local",
   "keywords": ["video", "watch", "youtube", "local", "gpu", "cpu", "cuda", "nvdec", "whisper", "faster-whisper", "yt-dlp", "ffmpeg", "portable", "multimodal", "frames", "windows", "linux"]
 }

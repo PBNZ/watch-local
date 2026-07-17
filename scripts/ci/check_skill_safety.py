@@ -41,6 +41,7 @@ ALLOWED_URL_PREFIXES = (
     "https://github.com/bradautomates/",    # upstream project credit
     "https://learn.microsoft.com/",         # PowerShell install instructions
     "https://docs.pytest.org/",             # testing docs reference
+    "https://www.contributor-covenant.org/", # code of conduct reference
     "https://docs.docker.com/",             # legacy Docker-era CHANGELOG history
     "https://www.docker.com/",              # legacy Docker-era CHANGELOG history
     "https://www.youtube.com/watch",        # example video links

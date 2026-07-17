@@ -2,6 +2,13 @@ dist/
 __pycache__/
 .pytest_cache/
 *.pyc
+# /watch -SaveHere promotes artifacts (video, frames, transcripts) into
+# ./watch-local-output/ relative to cwd -- dogfooding from the repo dir
+# must never stage large/copyrighted binaries into the public repo.
+watch-local-output/
+.claude/settings.local.json
+.DS_Store
+Thumbs.db
 # Re-include: a global gitignore pattern like '*private*' would otherwise
 # silently drop this CI validator from commits (it did once).
 !scripts/ci/check_no_private_contact.py
