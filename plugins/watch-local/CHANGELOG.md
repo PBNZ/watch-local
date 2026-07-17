@@ -3,6 +3,12 @@
 ## [Unreleased]
 
 ### Fixed
+- **Disk pre-flight measured the wrong volume on Linux/macOS** (#3).
+  `Get-DriveFreeGB` matched every path to the single `/` PSDrive, so the
+  free-space check always reported the root filesystem -- rejecting jobs
+  when `/` was tight even with terabytes free on the jobs volume, and
+  passing when the real target mount was full. Unix now stats the actual
+  path (deepest existing ancestor) via POSIX `df -Pk`.
 - **Scope guard (`Assert-InsideRoot`) hardening** (#8, #9). Containment is
   now compared case-sensitively (Ordinal) on Linux/macOS, so a sibling
   directory differing from `jobs_root` only by case can no longer be

@@ -165,6 +165,22 @@ Describe 'Assert-InsideRoot scope invariant' {
     }
 }
 
+Describe 'Disk free-space helper (Get-DriveFreeGB)' {
+    # On Unix this exercises the df-based branch (the PSDrive logic
+    # reported the root '/' filesystem for every path); on Windows the
+    # drive-letter branch.
+    It 'returns a positive number for an existing path' {
+        $free = Get-DriveFreeGB ([System.IO.Path]::GetTempPath())
+        $free | Should -BeGreaterThan 0
+    }
+
+    It 'returns a positive number for a not-yet-created nested path' {
+        # Pre-flight runs before jobs_root exists on first run.
+        $free = Get-DriveFreeGB (Join-Path ([System.IO.Path]::GetTempPath()) 'wl-nope/deeper/still')
+        $free | Should -BeGreaterThan 0
+    }
+}
+
 Describe 'Confirm token helpers' {
     It 'New-ConfirmToken includes prefix' {
         $t = New-ConfirmToken 'TEST'

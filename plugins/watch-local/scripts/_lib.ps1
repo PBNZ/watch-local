@@ -273,18 +273,41 @@ function Resolve-ConfigPath([string]$path) {
 
 #region Disk
 
-# Free space in GB on the drive containing $path. Works with UNC by
-# resolving to the host drive.
+# Free space in GB on the volume containing $path. Works with UNC by
+# resolving to the host drive. Returns $null when it cannot tell (callers
+# treat that as "skip the check", never as 0).
 function Get-DriveFreeGB([string]$path) {
     try {
         $resolved = [System.IO.Path]::GetFullPath($path)
-        $root = [System.IO.Path]::GetPathRoot($resolved)
-        if (-not $root) { return $null }
-        $drive = Get-PSDrive -PSProvider FileSystem | Where-Object {
-            $_.Root.TrimEnd('\').ToLower() -eq $root.TrimEnd('\').ToLower()
-        } | Select-Object -First 1
-        if (-not $drive) { return $null }
-        return [math]::Round($drive.Free / 1GB, 2)
+        if ($script:WL_IS_WINDOWS) {
+            $root = [System.IO.Path]::GetPathRoot($resolved)
+            if (-not $root) { return $null }
+            $drive = Get-PSDrive -PSProvider FileSystem | Where-Object {
+                $_.Root.TrimEnd('\').ToLower() -eq $root.TrimEnd('\').ToLower()
+            } | Select-Object -First 1
+            if (-not $drive) { return $null }
+            return [math]::Round($drive.Free / 1GB, 2)
+        }
+        # Unix: GetPathRoot is always '/' and PowerShell exposes a single
+        # '/' FileSystem PSDrive, so the Windows logic would report the
+        # root filesystem for every path (wrong whenever /home, /tmp, or
+        # an external volume is a separate mount). Stat the actual path --
+        # or its deepest existing ancestor, so pre-creation checks work --
+        # with POSIX df.
+        $probe = $resolved
+        while ($probe -and -not (Test-Path -LiteralPath $probe)) {
+            $probe = [System.IO.Path]::GetDirectoryName($probe)
+        }
+        if (-not $probe) { return $null }
+        $lines = @(& df -Pk -- $probe 2>$null)
+        if ($LASTEXITCODE -ne 0 -or $lines.Count -lt 2) { return $null }
+        # Portable (-P) format, one line per filesystem:
+        # Filesystem 1024-blocks Used Available Capacity Mounted-on
+        $fields = -split [string]$lines[-1]
+        if ($fields.Count -lt 4) { return $null }
+        $availKb = [long]0
+        if (-not [long]::TryParse($fields[3], [ref]$availKb)) { return $null }
+        return [math]::Round(($availKb * 1KB) / 1GB, 2)
     } catch {
         Write-Detail "Get-DriveFreeGB failed for ${path}: $($_.Exception.Message)"
         return $null
