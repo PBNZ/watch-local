@@ -57,9 +57,12 @@ runtime that `/watch-setup` downloads into the state root:
 
 Pinned versions, per-platform download URLs (immutable versioned release
 assets), and sha256 hashes live in `scripts/runtime-manifest.json`;
-`_runtime.ps1` verifies every download against its hash. Supported
-platforms: `win_x64`, `linux_x64`, `macos_arm64` (evermeet ffmpeg is
-x86_64 and runs under Rosetta 2).
+`_runtime.ps1` verifies each of the four binary downloads against its
+hash. The CPython interpreter and pip wheels are version-pinned only,
+installed via uv (see SECURITY.md "Download integrity" for the exact
+trust boundary). Supported platforms: `win_x64`, `linux_x64`,
+`macos_arm64` (evermeet ffmpeg is x86_64 and runs under Rosetta 2;
+setup probes for it).
 
 Containment rules, enforced by `_runtime.ps1`:
 

@@ -71,10 +71,12 @@ Primary (best-tested) setup:
   (standard on most machines; strict AppLocker/WDAC policies may block it)
 
 **No Docker.** No admin rights. Nothing is installed system-wide: setup
-downloads pinned portable binaries (yt-dlp, ffmpeg, deno, uv) and a
-self-contained Python into `%LOCALAPPDATA%\watch-local\runtime\`, verified
-against sha256 pins. Nothing touches PATH, the registry, or Program
-Files. **Deleting `%LOCALAPPDATA%\watch-local\` removes everything.**
+downloads the four portable binaries (yt-dlp, ffmpeg, deno, uv) into
+`%LOCALAPPDATA%\watch-local\runtime\`, each verified against a sha256 pin,
+plus a self-contained Python + whisper stack that is version-pinned and
+fetched through uv/PyPI (see SECURITY.md for the exact trust boundary).
+Nothing touches PATH, the registry, or Program Files. **Deleting
+`%LOCALAPPDATA%\watch-local\` removes everything.**
 
 No NVIDIA GPU? Setup configures **CPU-only mode** automatically:
 everything works, transcription is just slower (the wizard recommends the
