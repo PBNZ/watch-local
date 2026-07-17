@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## 0.6.0 -- 2026-07-17
+
+Pre-launch hardening release: every finding from the July 2026 public
+review sweep (GitHub issues #2-#28) addressed, plus community
+contributions. Highlights: prompt-injection framing for the report,
+platform-correct scope guard, UNC staging lifecycle with guaranteed
+cleanup, working disk pre-flight on Linux/macOS, and end-to-end coverage
+for the destructive purge paths.
+
 ### Added
 - **Coverage for the supply-chain and safety gates** (#24): the
   `Get-WLPinnedFile` hash-mismatch rejection (throw + delete) and
