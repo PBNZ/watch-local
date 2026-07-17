@@ -150,8 +150,10 @@ watch-local/
 
 - **Windows 11 + NVIDIA GPU is the battle-tested path.** CPU-only mode and
   Linux/macOS (pwsh, CPU mode) are implemented and unit-tested but have had
-  far less real-world use. macOS ffmpeg is an x86_64 build (Rosetta 2 on
-  Apple Silicon).
+  far less real-world use. macOS ffmpeg is an x86_64 build, so Apple
+  Silicon needs Rosetta 2 (`softwareupdate --install-rosetta
+  --agree-to-license`); setup probes for it and stops with that command
+  when it is missing.
 - **CPU transcription is slow with big models.** `large-v3` on CPU can
   approach real-time on long videos; the launcher warns and the wizard
   recommends `small` on CPU machines.

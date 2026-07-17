@@ -228,6 +228,32 @@ function Install-WLRuntimeBinaries {
         }
         Install-WLBinary -Name $name -Spec $spec -Platform $platform | Out-Null
     }
+
+    # Apple Silicon: the pinned evermeet ffmpeg/ffprobe are x86_64 builds
+    # that need Rosetta 2 -- which is NOT preinstalled, and a shell exec of
+    # an x86_64 binary does NOT trigger the GUI on-demand install (it just
+    # fails with 'bad CPU type in executable'). Probe right after install
+    # so setup stops with the actual fix instead of completing
+    # 'successfully' while every later ffmpeg call fails.
+    if ($platform -eq 'macos_arm64') {
+        $ffmpeg = Get-WLFfmpegBin
+        $ffmpegRuns = $false
+        $orig = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            & $ffmpeg -version 2>$null | Out-Null
+            $ffmpegRuns = ($LASTEXITCODE -eq 0)
+        } catch {
+            $ffmpegRuns = $false
+        } finally {
+            $ErrorActionPreference = $orig
+        }
+        if (-not $ffmpegRuns) {
+            throw ("the pinned macOS ffmpeg is an x86_64 build and could not run on this Apple Silicon Mac -- " +
+                   "Rosetta 2 is most likely missing. Install it with:`n" +
+                   "  softwareupdate --install-rosetta --agree-to-license`nthen re-run setup.")
+        }
+    }
 }
 
 # Stage 2: pinned CPython + the whisper venv. GPU wheels (~1.3 GB) only

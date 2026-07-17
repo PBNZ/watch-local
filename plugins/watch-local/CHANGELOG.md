@@ -21,6 +21,12 @@
   in SECURITY.md.
 
 ### Fixed
+- **Apple Silicon setup now probes for Rosetta 2** (#19). The pinned
+  macOS ffmpeg is x86_64; on an M-series Mac without Rosetta, setup used
+  to complete "successfully" while every ffmpeg call failed with 'bad
+  CPU type in executable'. Binary provisioning now runs `ffmpeg
+  -version` on `macos_arm64` and stops with the exact
+  `softwareupdate --install-rosetta` command when it cannot run.
 - **Onboarding's interactive 'Which model?' reply is validated** (#17):
   a typo no longer poisons `config.default_model` (which bypassed
   watch.ps1's ValidateSet and failed every subsequent run); invalid
