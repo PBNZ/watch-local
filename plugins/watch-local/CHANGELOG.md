@@ -27,6 +27,13 @@
   and to flag suspected injection to the user. Residual risk documented
   in SECURITY.md.
 
+### Changed
+- **Exit-code contract now matches emitted codes** (#27): the never-used
+  `WHISPER_FAILED` (31) and `GPU_MISSING` (12) constants and the stale
+  architecture.md exit-31 row are gone -- whisper/GPU trouble is
+  non-fatal by design (partial-result report, exit 0), which the table
+  now states explicitly. Dead `Convert-WLTime` helper removed.
+
 ### Fixed
 - **Apple Silicon setup now probes for Rosetta 2** (#19). The pinned
   macOS ffmpeg is x86_64; on an M-series Mac without Rosetta, setup used

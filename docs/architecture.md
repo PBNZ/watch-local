@@ -196,12 +196,16 @@ Documented in `scripts/_lib.ps1`:
 | 0 | success |
 | 10 | runtime not provisioned (run /watch-setup) |
 | 11 | runtime provisioned but incomplete (setup.ps1 -UpdateRuntime) |
-| 12 | retired (0.4.0): GPU absence now selects CPU mode instead of failing |
 | 20 | source not found / unreachable |
 | 21 | UNC stage copy failed |
 | 22 | incompatible flags (-OutDir + -SaveHere etc.) |
 | 30 | tools worker / still extraction failed |
-| 31 | whisper setup failure (setup). During /watch a whisper failure is non-fatal: partial report, exit 0 |
 | 40 | save-here transfer failed |
 | 50 | insufficient disk space |
 | 60 | purge refused (outside safe roots, missing confirmation, etc.) |
+
+Retired codes, never emitted: 12 (GPU absence selects CPU mode), 31 and
+32 (whisper / compare failures are non-fatal by design -- the run warns,
+emits a partial-result report, and still exits 0). A programmatic caller
+cannot distinguish "whisper ran" from "whisper failed" by exit code;
+check the report's `**Partial result**` banner.

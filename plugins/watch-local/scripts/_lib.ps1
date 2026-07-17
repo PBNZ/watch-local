@@ -43,14 +43,16 @@ $script:WL_EXIT = [ordered]@{
     OK                 = 0
     RUNTIME_MISSING    = 10   # runtime not provisioned (was DOCKER_MISSING)
     RUNTIME_BROKEN     = 11   # runtime provisioned but incomplete (was DOCKER_DOWN)
-    GPU_MISSING        = 12
     SOURCE_BAD         = 20
     UNC_COPY_FAILED    = 21
     FLAG_CONFLICT      = 22
     TOOLS_FAILED       = 30
-    WHISPER_FAILED     = 31
-    # 32 (compare failed) retired: the compare stage is non-fatal by design
-    # (warn + report continues), so no process can ever exit 32.
+    # Retired codes (kept out of the table so the documented contract
+    # matches what is actually emitted):
+    #   12 (GPU missing)    -- GPU absence selects CPU mode, never exits.
+    #   31 (whisper failed) -- whisper failure is non-fatal by design:
+    #        warn + partial-result report, run still exits OK.
+    #   32 (compare failed) -- compare stage is non-fatal by design.
     REPORT_FAILED      = 40
     NO_DISK            = 50
     PURGE_REFUSED      = 60
@@ -414,23 +416,6 @@ function Format-WLTime([double]$seconds) {
     $s = [int]($total % 60)
     if ($h -gt 0) { return ('{0}:{1:D2}:{2:D2}' -f $h, $m, $s) }
     return ('{0:D2}:{1:D2}' -f $m, $s)
-}
-
-# Mirror frames.parse_time -- accepts SS / MM:SS / HH:MM:SS. Returns
-# $null for null/empty input.
-function Convert-WLTime([string]$value) {
-    if ([string]::IsNullOrWhiteSpace($value)) { return $null }
-    $parts = $value.Trim() -split ':'
-    try {
-        switch ($parts.Count) {
-            1 { return [double]$parts[0] }
-            2 { return ([int]$parts[0] * 60) + [double]$parts[1] }
-            3 { return ([int]$parts[0] * 3600) + ([int]$parts[1] * 60) + [double]$parts[2] }
-            default { throw 'too many colons' }
-        }
-    } catch {
-        throw "cannot parse time '$value': $($_.Exception.Message)"
-    }
 }
 
 #endregion

@@ -29,16 +29,6 @@ Describe 'Time helpers' {
         { Format-WLTime 1234.7 } | Should -Not -Throw
     }
 
-    It 'Convert-WLTime parses SS, MM:SS, HH:MM:SS' {
-        Convert-WLTime '45'       | Should -Be 45.0
-        Convert-WLTime '01:30'    | Should -Be 90.0
-        Convert-WLTime '01:02:03' | Should -Be 3723.0
-    }
-
-    It 'Convert-WLTime returns null for empty / null' {
-        Convert-WLTime $null | Should -BeNullOrEmpty
-        Convert-WLTime ''    | Should -BeNullOrEmpty
-    }
 }
 
 Describe 'Slug helper' {
