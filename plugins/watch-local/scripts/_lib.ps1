@@ -164,22 +164,56 @@ function Assert-InsideRoot {
         Write-Err "cannot resolve path: $Target"
         exit $script:WL_EXIT.PURGE_REFUSED
     }
-    # Resolve real-path through any reparse points.
+    # Resolve the leaf through a symlink/junction so a link inside the root
+    # pointing outside is judged by its real location. Only true links are
+    # resolved: other reparse tags (OneDrive / cloud placeholders) have no
+    # target and must pass through as ordinary directories. A link whose
+    # target cannot be determined is refused outright (fail closed) -- the
+    # guard must prove containment, and an unresolvable link proves nothing.
+    # Intermediate-component links are not resolved; destructive callers
+    # pass the directory to delete as the leaf.
+    $item = $null
     try {
         $item = Get-Item -LiteralPath $tRes -Force -ErrorAction Stop
-        if ($item.PSObject.Properties.Match('Target').Count -gt 0 -and $item.Target) {
-            $tRes = [System.IO.Path]::GetFullPath((Join-Path $tRes '..' $item.Target))
-        }
     } catch {
         # Path doesn't exist yet -- that's fine for create-time checks.
     }
+    if ($null -ne $item -and
+        $item.PSObject.Properties.Match('LinkType').Count -gt 0 -and
+        $item.LinkType -in @('SymbolicLink', 'Junction')) {
+        $linkTarget = $null
+        try {
+            # .Target is a string on PS 7 but a string collection on 5.1.
+            $rawTarget = [string](@($item.Target) | Select-Object -First 1)
+            if (-not [string]::IsNullOrWhiteSpace($rawTarget)) {
+                if ([System.IO.Path]::IsPathRooted($rawTarget)) {
+                    $linkTarget = [System.IO.Path]::GetFullPath($rawTarget)
+                } else {
+                    $parent = [System.IO.Path]::GetDirectoryName($tRes)
+                    $linkTarget = [System.IO.Path]::GetFullPath((Join-Path $parent $rawTarget))
+                }
+            }
+        } catch {
+            $linkTarget = $null
+        }
+        if (-not $linkTarget) {
+            Write-Err "refused: $Target is a link whose target cannot be resolved"
+            exit $script:WL_EXIT.PURGE_REFUSED
+        }
+        $tRes = $linkTarget
+    }
     $tRes = $tRes.TrimEnd([char]'\', [char]'/')
     $rRes = $rRes.TrimEnd([char]'\', [char]'/')
-    if ($tRes -ieq $rRes) {
+    # Windows filesystems are case-insensitive; default Linux (and
+    # case-sensitive APFS) are not -- a case-folding compare there would
+    # map a distinct sibling like .../JOBS into the root subtree.
+    $cmp = if ($script:WL_IS_WINDOWS) { [System.StringComparison]::OrdinalIgnoreCase }
+           else { [System.StringComparison]::Ordinal }
+    if ([string]::Equals($tRes, $rRes, $cmp)) {
         Write-Err "refused: target is the root itself, not a child: $Target"
         exit $script:WL_EXIT.PURGE_REFUSED
     }
-    if (-not $tRes.ToLower().StartsWith(($rRes + [System.IO.Path]::DirectorySeparatorChar).ToLower())) {
+    if (-not $tRes.StartsWith(($rRes + [System.IO.Path]::DirectorySeparatorChar), $cmp)) {
         Write-Err "refused: $Target is outside safe root $Root"
         exit $script:WL_EXIT.PURGE_REFUSED
     }

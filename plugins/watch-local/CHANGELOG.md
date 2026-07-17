@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Scope guard (`Assert-InsideRoot`) hardening** (#8, #9). Containment is
+  now compared case-sensitively (Ordinal) on Linux/macOS, so a sibling
+  directory differing from `jobs_root` only by case can no longer be
+  purged; Windows keeps OrdinalIgnoreCase. Symlink/junction leaf
+  resolution actually works on both engines (the old 3-arg `Join-Path`
+  threw on PowerShell 5.1 and mangled absolute targets on 7): rooted link
+  targets are used directly, relative ones resolve against the link's
+  parent, and a link whose target cannot be determined is refused (fail
+  closed). Non-link reparse tags (OneDrive placeholders) pass through
+  unchanged. New Pester coverage: sibling-prefix escape, case-distinct
+  sibling (Linux), junction-escape (Windows).
+
 ## 0.5.0 -- 2026-07-16
 
 Promoted `0.5.0-rc.2` to a stable release. No functional changes since the

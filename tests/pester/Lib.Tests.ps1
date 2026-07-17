@@ -4,6 +4,13 @@
 #
 # Pester 5 syntax.
 
+BeforeDiscovery {
+    # -Skip: conditions are evaluated at discovery time, before BeforeAll
+    # has dot-sourced the lib -- compute the platform here, not via
+    # $script:WL_IS_WINDOWS.
+    $script:OnWindows = ($PSVersionTable.PSVersion.Major -lt 6) -or $IsWindows
+}
+
 BeforeAll {
     $script:Root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).ProviderPath
     $script:LibPath = Join-Path $Root 'plugins/watch-local/scripts/_lib.ps1'
@@ -108,6 +115,53 @@ Describe 'Assert-InsideRoot scope invariant' {
 
     It 'rejects path traversal attempts' {
         Invoke-AssertSubshell "$tmpRoot\good\..\..\foo" $tmpRoot | Should -Not -Be 0
+    }
+
+    It 'rejects a sibling dir sharing the root as a string prefix' {
+        # Root=.../jobs must not contain .../jobs-evil/x. Guards the
+        # separator append in the containment predicate.
+        $sibling = "$tmpRoot-evil"
+        New-Item -ItemType Directory -Force -Path (Join-Path $sibling 'x') | Out-Null
+        try {
+            Invoke-AssertSubshell (Join-Path $sibling 'x') $tmpRoot | Should -Not -Be 0
+        } finally {
+            Remove-Item -LiteralPath $sibling -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'treats case-distinct paths as outside root on case-sensitive filesystems' -Skip:$script:OnWindows {
+        # On default Linux, .../JOBS is a physically different directory
+        # from the .../jobs root; the guard must not case-fold it inside.
+        $upper = Join-Path (Split-Path $tmpRoot -Parent) ((Split-Path $tmpRoot -Leaf).ToUpper())
+        New-Item -ItemType Directory -Force -Path (Join-Path $upper 'secret') | Out-Null
+        try {
+            Invoke-AssertSubshell (Join-Path $upper 'secret') $tmpRoot | Should -Not -Be 0
+        } finally {
+            Remove-Item -LiteralPath $upper -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'rejects a junction inside root pointing outside root' -Skip:(-not $script:OnWindows) {
+        # Reparse defense-in-depth: a junction under jobs_root whose target
+        # escapes the root must be judged by its resolved location.
+        $outside = Join-Path ([System.IO.Path]::GetTempPath()) ("wl-scope-outside-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+        New-Item -ItemType Directory -Force -Path $outside | Out-Null
+        $junction = Join-Path $tmpRoot 'jx'
+        try {
+            New-Item -ItemType Junction -Path $junction -Target $outside | Out-Null
+            Invoke-AssertSubshell $junction $tmpRoot | Should -Not -Be 0
+        } finally {
+            if (Test-Path -LiteralPath $junction) {
+                Remove-Item -LiteralPath $junction -Force -ErrorAction SilentlyContinue
+            }
+            Remove-Item -LiteralPath $outside -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'still accepts an ordinary subdir on a OneDrive-style reparse tree' {
+        # Regression guard: non-link reparse tags (cloud placeholders) have
+        # no LinkType and must not trip the fail-closed link handling.
+        { Assert-InsideRoot -Target (Join-Path $tmpRoot 'good') -Root $tmpRoot } | Should -Not -Throw
     }
 }
 
