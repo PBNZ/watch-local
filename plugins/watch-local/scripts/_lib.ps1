@@ -139,7 +139,8 @@ function Enable-VerboseLog { $script:WL_VERBOSE = $true }
 # different across calls (includes ticks) so reruns get fresh dirs.
 function New-JobSlug([string]$source) {
     $bytes = [System.Text.Encoding]::UTF8.GetBytes("$source|$([DateTime]::UtcNow.Ticks)")
-    $hash  = [System.Security.Cryptography.SHA1]::Create().ComputeHash($bytes)
+    $sha = [System.Security.Cryptography.SHA1]::Create()
+    try { $hash = $sha.ComputeHash($bytes) } finally { $sha.Dispose() }
     return -join ($hash | Select-Object -First 8 | ForEach-Object { $_.ToString('x2') })
 }
 
