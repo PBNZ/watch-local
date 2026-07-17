@@ -8,7 +8,7 @@ Parse $ARGUMENTS:
 - First positional token is the slug, or "last" (default if omitted).
 - `--include-source` -> add `-IncludeSource` to the call.
 - `--move` -> add `-MoveOnSave`.
-- `--remove-canonical` -> add `-RemoveCanonical` (prompts user inside the script unless interactive prompts have already run).
+- `--remove-canonical` -> add `-RemoveCanonical`. IMPORTANT: confirm with the user (AskUserQuestion) before running with this flag -- the script only prompts on interactive hosts; from this non-interactive Bash call it removes the canonical job dir immediately after a successful copy.
 
 Then run:
 

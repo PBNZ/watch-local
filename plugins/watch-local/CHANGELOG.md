@@ -3,6 +3,20 @@
 ## [Unreleased]
 
 ### Fixed
+- **save-here dropped source-link.txt / `-IncludeSource` for local/UNC
+  jobs on the primary (concrete-slug) path** (#4) -- which is what
+  `/watch <file> -SaveHere` always uses -- while the report still claimed
+  both were written. Source metadata is now recovered from the job's own
+  `job.json` (falling back to a slug-matching `last-job.json`) for any
+  slug, and the report states only what actually happened.
+- **save-here crashed under StrictMode on pre-`is_url` last-job.json
+  schemas** (#12). All job-metadata fields are read through the guarded
+  `Get-WLObjectProp` pattern and degrade gracefully when missing.
+- **`--remove-canonical` deleted the canonical job dir without the
+  confirmation its docs promised** (#20). Interactive hosts now get a
+  [y/N] prompt; non-interactive (agent-driven) runs proceed after the
+  verified copy, and the command doc tells the agent to confirm with the
+  user first. New Pester suite covers all three fixes.
 - **Disk pre-flight measured the wrong volume on Linux/macOS** (#3).
   `Get-DriveFreeGB` matched every path to the single `/` PSDrive, so the
   free-space check always reported the root filesystem -- rejecting jobs
