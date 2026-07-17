@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## 0.6.1 -- 2026-07-17
+
+Patch release so the distribution zip matches main exactly.
+
+### Fixed
+- **`Get-PartialSHA256` disposes its SHA256 hasher** (#28) -- first
+  community contribution, by @Dodothereal (PR #30). Matches the
+  try/finally pattern used by the other hashing helpers.
+- LICENSE copyright holder line corrected to `PBNZ`.
+
 ## 0.6.0 -- 2026-07-17
 
 Pre-launch hardening release: every finding from the July 2026 public

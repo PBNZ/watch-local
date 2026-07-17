@@ -1,6 +1,6 @@
 {
   "name": "watch-local",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Let Claude watch a video -- fully local. Downloads with yt-dlp, extracts auto-scaled frames with ffmpeg, ALWAYS transcribes with faster-whisper and compares against creator-provided captions. Auto-detects your NVIDIA GPU: uses it for video decode (NVDEC) and whisper when present, falls back to a fully working CPU-only mode when not. Self-provisioned portable runtime -- no Docker, no system installs, delete one folder to remove everything. Supports URLs, local files, and SMB/UNC paths. No cloud API keys.",
   "author": {
     "name": "Peter (port of bradautomates/claude-video)"

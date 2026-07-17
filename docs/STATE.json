@@ -2,7 +2,7 @@
   "stale_after_days": 0,
   "facts": {
     "overall_status": {
-      "value": "0.6.0 (stable release)",
+      "value": "0.6.1 (stable release)",
       "as_of": "2026-07-17",
       "note": "Release status"
     },

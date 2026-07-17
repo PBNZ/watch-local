@@ -2,7 +2,7 @@
   "name": "watch-local",
   "metadata": {
     "description": "Give Claude a video input -- fully local. /watch downloads, extracts frames, and transcribes on a self-provisioned portable runtime (no Docker) -- on your NVIDIA GPU when one is detected, on CPU otherwise. No cloud APIs.",
-    "version": "0.6.0"
+    "version": "0.6.1"
   },
   "owner": {
     "name": "Peter",
