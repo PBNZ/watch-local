@@ -8,6 +8,18 @@
   older versions). `/watch`'s `auto_cleanup_days` warning now scans
   staging leftovers too.
 
+### Security
+- **Prompt-injection hardening for the report** (#2). Video-derived
+  fields (title, uploader, whisper repetition text, source echo) are
+  neutralized before hitting bare markdown (control chars / backticks /
+  angle brackets stripped, length capped); transcript blocks strip
+  backticks so hostile captions cannot break out of their code fences.
+  The report opens with an explicit untrusted-data banner, per-field
+  labels mark video-derived values, and SKILL.md / the /watch command doc
+  instruct the agent to treat video content as data, never instructions,
+  and to flag suspected injection to the user. Residual risk documented
+  in SECURITY.md.
+
 ### Fixed
 - **Staged UNC copies leaked into `%TEMP%` on every failed/early-exit run
   and the staging free-space check ran after the copy** (#5, #15). The

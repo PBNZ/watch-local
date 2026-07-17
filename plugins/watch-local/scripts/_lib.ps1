@@ -523,6 +523,21 @@ function Get-WLFileSHA256([string]$path) {
     return (($bytes | ForEach-Object { $_.ToString('x2') }) -join '')
 }
 
+# Neutralize untrusted metadata for bare markdown report lines: video
+# title / uploader / spoken text are third-party-controlled. Strip control
+# chars, backticks (inline-code / fence escapes), and angle brackets (raw
+# HTML), and cap length so a hostile value cannot restyle or bloat the
+# report. This reduces markup mischief; the instruction-following risk is
+# handled by explicit untrusted-data framing in the report + SKILL.md.
+function ConvertTo-WLSafeMetaText {
+    param([AllowNull()][AllowEmptyString()][string]$Text, [int]$MaxLen = 200)
+    if ([string]::IsNullOrEmpty($Text)) { return $Text }
+    $t = $Text -replace "[\x00-\x1F\x7F]", ' '
+    $t = $t -replace '`', "'" -replace '[<>]', ''
+    if ($t.Length -gt $MaxLen) { $t = $t.Substring(0, $MaxLen) + '...' }
+    return $t
+}
+
 # Read a UTF-8 file regardless of BOM.
 function Read-UTF8 ([string]$path) {
     return [System.IO.File]::ReadAllText($path, [System.Text.UTF8Encoding]::new($false, $false))

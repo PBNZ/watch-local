@@ -26,6 +26,25 @@ CI runs `claude plugin validate --strict` plus safety scans (invisible
 Unicode, prompt-injection phrases, URL host allowlist, private contact info)
 on every push -- see `scripts/ci/` and `.github/workflows/validate.yml`.
 
+## Untrusted video content (prompt injection)
+
+The whole point of `/watch` is to feed third-party video content (title,
+uploader, captions, whisper transcript, frame imagery) to an agent that
+holds Bash + Read tools -- an inherent prompt-injection surface. Mitigations:
+
+- The report frames all video-derived fields as untrusted data (explicit
+  banner + per-field labels), and SKILL.md / the command docs instruct the
+  agent to never follow instructions found inside them and to flag
+  suspected injection attempts to the user.
+- Title/uploader/repetition text is neutralized before it hits bare
+  markdown (control chars, backticks, and angle brackets stripped; length
+  capped), and transcript blocks strip backticks so they cannot break out
+  of their code fences.
+
+This reduces, but cannot eliminate, the risk: instruction-following by the
+model is probabilistic, and text visible *inside* video frames cannot be
+sanitized. Treat reports from adversarial sources accordingly.
+
 ## Reporting
 
 Open a GitHub issue on this repository. Please do not include exploit
