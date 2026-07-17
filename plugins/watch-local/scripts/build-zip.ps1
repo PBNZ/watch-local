@@ -53,8 +53,10 @@ if (Test-Path -LiteralPath $zipPath) {
     Remove-Item -LiteralPath $zipPath -Force
 }
 
-# Build a staging dir to control exact zip contents.
-$stage = Join-Path $env:TEMP ("wl-zip-stage-" + [Guid]::NewGuid().ToString('N').Substring(0,8))
+# Build a staging dir to control exact zip contents. GetTempPath, not
+# $env:TEMP -- TEMP is undefined on Linux/macOS pwsh and Join-Path $null
+# throws under StrictMode (matches _lib.ps1's cross-platform pattern).
+$stage = Join-Path ([System.IO.Path]::GetTempPath()) ("wl-zip-stage-" + [Guid]::NewGuid().ToString('N').Substring(0,8))
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
 try {
     # Top-level includes.

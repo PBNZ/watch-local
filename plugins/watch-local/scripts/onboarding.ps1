@@ -142,6 +142,15 @@ Write-Output '  base      ~150 MB     fast smoke testing'
 Write-Output '  tiny      ~75 MB      smoke testing only'
 $recommended = if ($gpuPresent) { 'large-v3' } else { 'small' }
 $pickedModel = if ($Model) { $Model } else { _Prompt 'Which model?' $recommended }
+# The interactive reply is free text; a typo persisted to
+# config.default_model would make every subsequent /watch fail trying to
+# load a nonexistent model. Validate against the -Model ValidateSet.
+$allowedModels = @('large-v3', 'medium', 'small', 'base', 'tiny')
+$pickedModel = ([string]$pickedModel).Trim().ToLowerInvariant()
+if ($pickedModel -notin $allowedModels) {
+    Write-Warn "'$pickedModel' is not a known model ($($allowedModels -join ', ')) -- using the recommended '$recommended' instead."
+    $pickedModel = $recommended
+}
 $cfg.default_model = $pickedModel
 Save-WLConfig $cfg
 Write-Output "default_model = $pickedModel"

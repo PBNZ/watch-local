@@ -21,6 +21,17 @@
   in SECURITY.md.
 
 ### Fixed
+- **Onboarding's interactive 'Which model?' reply is validated** (#17):
+  a typo no longer poisons `config.default_model` (which bypassed
+  watch.ps1's ValidateSet and failed every subsequent run); invalid
+  replies fall back to the recommended model with a warning, and
+  `setup.ps1 -Model` now carries the same ValidateSet.
+- **`setup.ps1 -RemoveModel` treats `-ModelName` as literal text** (#16):
+  wildcard metacharacters are escaped before the `-like` match, exact
+  names win, and an ambiguous fuzzy match is refused with the candidate
+  list instead of silently taking the first hit.
+- **`build-zip.ps1` works on Linux/macOS pwsh** (#18): the stage dir uses
+  `[IO.Path]::GetTempPath()` instead of `$env:TEMP` (undefined there).
 - **The CUDA-whisper probe no longer breaks on install paths containing
   a single quote** (#11, e.g. username O'Brien): the worker dir is
   passed via env var instead of being interpolated into Python `-c`

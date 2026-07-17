@@ -43,6 +43,7 @@ param(
     [Parameter(ParameterSetName='Install')]
     [switch]$Force,
     [Parameter(ParameterSetName='Install')]
+    [ValidateSet('large-v3','medium','small','base','tiny')]
     [string]$Model,
 
     [Parameter(ParameterSetName='UpdateRuntime')]
@@ -604,12 +605,23 @@ function _RemoveModelCmd {
     $cfg = _EnsureConfig
     $root = [string]$cfg.models_root
     $hub = Join-Path (Join-Path $root 'hf-cache') 'hub'
+    # Escape the user input before using it in a -like pattern: a literal
+    # '*' in -ModelName must not fuzzy-match every cached model. Exact
+    # name wins; a fuzzy suffix match is only accepted when unambiguous.
+    $escaped = [System.Management.Automation.WildcardPattern]::Escape($ModelName)
     $target = $null
+    $fuzzy = @()
     foreach ($d in Get-ChildItem -LiteralPath $hub -Directory -ErrorAction SilentlyContinue) {
-        if ($d.Name -eq "models--$ModelName" -or $d.Name -like "models--*$ModelName") {
-            $target = $d.FullName
-            break
+        if ($d.Name -eq "models--$ModelName") { $target = $d.FullName; break }
+        if ($d.Name -like "models--*$escaped") { $fuzzy += $d.FullName }
+    }
+    if (-not $target) {
+        if ($fuzzy.Count -gt 1) {
+            Write-Err "multiple cached models match '$ModelName' -- use the full name (see -ListModels):"
+            foreach ($f in $fuzzy) { Write-Err "  - $(Split-Path -Leaf $f)" }
+            exit $script:WL_EXIT.SOURCE_BAD
         }
+        if ($fuzzy.Count -eq 1) { $target = $fuzzy[0] }
     }
     if (-not $target) { Write-Err "no cached model matches '$ModelName' under $hub"; exit $script:WL_EXIT.SOURCE_BAD }
     try { Assert-InsideRoot -Target $target -Root $root } catch { exit $script:WL_EXIT.PURGE_REFUSED }
