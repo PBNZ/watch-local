@@ -3,6 +3,13 @@
 ## [Unreleased]
 
 ### Added
+- **Coverage for the supply-chain and safety gates** (#24): the
+  `Get-WLPinnedFile` hash-mismatch rejection (throw + delete) and
+  happy path are now Pester-tested with a mocked download;
+  `Assert-InsideRoot` gained sibling-prefix / case-sensitivity /
+  junction tests; `tools_run.py`/`stills.py` gained pytest coverage; and
+  a new weekly `Integration` workflow provisions the CPU runtime on
+  ubuntu and runs the integration layer CI never exercised before.
 - **`setup.ps1 -PurgeStaging`** (#5): preview + token-confirmed removal
   of leftover staged UNC copies under `staging_root` (from killed runs or
   older versions). `/watch`'s `auto_cleanup_days` warning now scans

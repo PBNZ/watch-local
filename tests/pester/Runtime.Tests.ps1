@@ -10,6 +10,41 @@ BeforeAll {
     . $script:LibPath
 }
 
+Describe 'Get-WLPinnedFile download verification (supply-chain gate)' {
+    # The compare-and-reject branch is the integrity gate for every
+    # pinned binary; a mutation here (flipped comparison, dropped throw)
+    # must fail the suite. The network fetch is mocked -- Invoke-WebRequest
+    # writes attacker/plausible bytes to -OutFile like the real one.
+    BeforeAll {
+        $script:payload = 'pinned-binary-payload'
+        $script:goodHash = $null
+        $probe = Join-Path $TestDrive 'hash-probe.bin'
+        [System.IO.File]::WriteAllText($probe, $payload)
+        $script:goodHash = Get-WLFileSHA256 $probe
+    }
+
+    BeforeEach {
+        Mock Invoke-WebRequest {
+            [System.IO.File]::WriteAllText($OutFile, $script:payload)
+        }
+    }
+
+    It 'throws on a sha256 mismatch AND removes the downloaded file' {
+        $dest = Join-Path $TestDrive 'dl-bad.bin'
+        $wrong = '0' * 64
+        { Get-WLPinnedFile -Url 'https://example.invalid/x.bin' -Dest $dest -Sha256 $wrong } |
+            Should -Throw '*sha256 mismatch*'
+        Test-Path -LiteralPath $dest | Should -BeFalse
+    }
+
+    It 'accepts a matching hash (case-insensitively) and keeps the file' {
+        $dest = Join-Path $TestDrive 'dl-good.bin'
+        { Get-WLPinnedFile -Url 'https://example.invalid/x.bin' -Dest $dest -Sha256 $script:goodHash.ToUpper() } |
+            Should -Not -Throw
+        Test-Path -LiteralPath $dest | Should -BeTrue
+    }
+}
+
 Describe 'runtime-manifest.json integrity' {
     BeforeAll {
         $script:m = Get-WLRuntimeManifest

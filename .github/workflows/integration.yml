@@ -1,0 +1,28 @@
+name: Integration
+
+# The integration layer needs a provisioned portable runtime (real
+# downloads: yt-dlp/ffmpeg/deno/uv binaries + CPU whisper stack + the
+# tiny model), so it runs on a schedule + on demand rather than per push.
+on:
+  schedule:
+    - cron: "17 5 * * 1" # weekly, Monday 05:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    name: native workers (ubuntu / pwsh, CPU runtime)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Provision portable runtime (CPU, tiny model)
+        shell: pwsh
+        run: ./plugins/watch-local/scripts/setup.ps1 -Model tiny
+
+      - name: Run integration layer
+        shell: pwsh
+        run: ./tests/run-tests.ps1 -Integration

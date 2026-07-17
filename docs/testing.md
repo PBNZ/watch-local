@@ -29,7 +29,10 @@ pwsh -File tests\run-tests.ps1 -Unit         # PowerShell 7 (also the Linux/macO
 
 CI runs the unit layer on **both** engines (windows-latest matrix in
 `validate.yml`). Run both locally before a release when launcher scripts
-changed.
+changed. The integration layer runs in CI on a weekly schedule
+(`integration.yml`: provisions the CPU runtime on ubuntu, then
+`run-tests.ps1 -Integration`); trigger it manually via workflow_dispatch
+after runtime-provisioning changes.
 
 ## Linux runs from a Windows build machine (Docker)
 
