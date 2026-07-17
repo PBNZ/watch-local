@@ -58,10 +58,16 @@ def main() -> int:
         tok = tok.strip()
         if not tok:
             continue
-        secs = parse_time(tok)
-        if secs is None:
+        # parse_time raises (SystemExit) on malformed input -- right for
+        # single-value fail-fast sites, but one bad token in a batch must
+        # not abort the valid ones.
+        try:
+            secs = parse_time(tok)
+        except (SystemExit, ValueError):
             print(f"[stills] WARNING: could not parse timestamp '{tok}' -- skipping",
                   file=sys.stderr)
+            continue
+        if secs is None:
             continue
         timestamps.append(secs)
 

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -81,12 +82,22 @@ def _pick_subtitle(out_dir: Path):
     return candidates[0]
 
 
+def _is_stream_fragment(p: Path) -> bool:
+    # video.f<format-id>.<ext> is a single unmerged stream that yt-dlp
+    # leaves behind when the merge step fails -- never a usable result
+    # (typically video-only, which would silently lose the audio track).
+    return re.match(r"^video\.f[\w-]+$", p.stem) is not None
+
+
 def _pick_video(out_dir: Path):
+    # Exact download/merge target only: video.<ext> as produced by the
+    # "video.%(ext)s" output template (+ --merge-output-format mp4).
     for ext in (".mp4", ".mkv", ".webm", ".mov"):
-        for c in out_dir.glob(f"video*{ext}"):
+        c = out_dir / f"video{ext}"
+        if c.exists():
             return c
     for c in out_dir.glob("video.*"):
-        if c.suffix.lower() in VIDEO_EXTS:
+        if c.suffix.lower() in VIDEO_EXTS and not _is_stream_fragment(c):
             return c
     return None
 
@@ -120,6 +131,13 @@ def download_url(url: str) -> dict:
     result = subprocess.run(cmd, stdout=sys.stderr, stderr=sys.stderr)
     video = _pick_video(DL_DIR)
     if video is None:
+        fragments = [c.name for c in DL_DIR.glob("video.f*") if c.is_file()]
+        if fragments:
+            raise SystemExit(
+                "yt-dlp left only unmerged stream fragments "
+                f"({', '.join(sorted(fragments))}) -- the download/merge failed "
+                f"(exit {result.returncode}). Re-run; if it persists, try setup.ps1 -UpdateYtDlp."
+            )
         raise SystemExit(f"yt-dlp did not produce a video file (exit {result.returncode})")
 
     info_path = DL_DIR / "video.info.json"
@@ -206,8 +224,23 @@ def main() -> int:
     else:
         fps, target = auto_fps(effective_duration, max_frames=max_frames)
     if fps_override is not None:
+        # Mirror the auto path's guards: reject non-positive fps up front
+        # (ffmpeg rejects fps=0 with an opaque error) and keep the target
+        # within max_frames -- extract() enforces -frames:v max_frames
+        # anyway, so an unclamped target would just misreport while the
+        # actual coverage silently stopped at max_frames/fps seconds.
+        if fps_override <= 0:
+            raise SystemExit(f"fps override must be positive (got {fps_override:g})")
         fps = min(fps_override, MAX_FPS)
-        target = max(1, int(round(fps * effective_duration)))
+        want = max(1, int(round(fps * effective_duration)))
+        target = min(max_frames, want)
+        if want > max_frames:
+            print(
+                f"[tools] WARNING: fps {fps:g} over {effective_duration:.0f}s asks for {want} frames "
+                f"but the cap is {max_frames}: coverage stops about {format_time(max_frames / fps)} in. "
+                "Lower -Fps or raise -MaxFrames for full coverage.",
+                file=sys.stderr, flush=True,
+            )
 
     scope = (
         f"{format_time(effective_start)}-{format_time(effective_end)} ({effective_duration:.1f}s)"

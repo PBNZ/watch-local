@@ -21,6 +21,19 @@
   in SECURITY.md.
 
 ### Fixed
+- **A merge-failed yt-dlp download is now a hard error instead of a
+  silent 'no audio track in source'** (#10). `_pick_video` only accepts
+  the real download/merge target (`video.<ext>`), never a leftover
+  `video.f<id>.<ext>` single-stream fragment (which is typically
+  video-only and made whisper skip with a misleading benign reason).
+- **One malformed `-Screenshots` timestamp no longer aborts the whole
+  batch** (#13): stills.py skips the bad token with a warning and
+  renders the valid ones.
+- **`-Fps` override now carries the auto path's guards** (#14):
+  non-positive values are rejected with a clear message (ffmpeg's
+  `fps=0` error was opaque), the reported target respects `-MaxFrames`,
+  and a warning explains when the cap truncates coverage on long videos.
+  New pytest coverage for all three plus the subtitle/video pick order.
 - **A Pester discovery/parse error no longer scores the unit layer PASS**
   (#6). run-tests.ps1 scored on `FailedCount -eq 0`, which is true when a
   broken `.Tests.ps1` silently drops all its tests; it now requires the
