@@ -1,13 +1,23 @@
 #!/usr/bin/env python3
-"""Scan prompt-facing Markdown for prompt-injection risks.
+"""Scan repo Markdown for prompt-injection risks.
 
-Scope: root README.md, plugins/*/SKILL.md, plugins/*/README.md,
-plugins/*/commands/*.md (the files a model actually reads).
+Scope: EVERY .md file in the repository (excluding build/output dirs) --
+prompt-facing files (SKILL.md, commands/*.md, READMEs) are what a model
+actually reads, but agents operating in the repo also read AGENTS.md,
+docs/*.md, SECURITY.md, and the shipped CHANGELOG, so everything is
+scanned and exceptions are allowlisted rather than the reverse.
 
-Three classes of finding, each a hard failure:
+Four classes of finding, each a hard failure:
 1. Dangerous invisible / bidi / steganographic Unicode.
-2. Imperative prompt-injection phrases ("ignore previous instructions", ...).
-3. URLs whose host is not in the inline allowlist below.
+2. Imperative prompt-injection phrases ("ignore previous instructions",
+   ...), matched against NFKC-normalized text. The phrase list is
+   best-effort by nature -- it catches known-literal patterns, not
+   paraphrases.
+3. Mixed-script words (Latin letters mixed with Cyrillic/Greek/... in one
+   word) -- the classic homoglyph evasion for check #2.
+4. URLs not matching the inline PREFIX allowlist below. Prefixes, not
+   bare hosts: whole-platform hosts (github.com) would otherwise pass
+   attacker-controlled repos.
 
 Output is GitHub Actions-compatible (::error file=...,line=...::...).
 """
@@ -16,27 +26,28 @@ from __future__ import annotations
 import pathlib
 import re
 import sys
+import unicodedata
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
-SCAN_GLOBS = (
-    "README.md",
-    "plugins/*/SKILL.md",
-    "plugins/*/README.md",
-    "plugins/*/commands/*.md",
-    "plugins/*/skills/*/SKILL.md",
-)
+# Directories whose Markdown is not ours to vouch for / not shipped.
+EXCLUDE_DIR_PARTS = {".git", "node_modules", "dist", "watch-local-output", "__pycache__"}
 
-# Hosts these files legitimately reference. Subdomains are allowed
-# (www.docker.com matches docker.com). Anything else fails the build.
-ALLOWED_HOSTS = {
-    "docker.com",            # legacy Docker-era links in CHANGELOG history
-    "learn.microsoft.com",   # PowerShell 7 install instructions (Linux/macOS)
-    "github.com",     # upstream project credit (bradautomates/claude-video)
-    "youtube.com",    # example video links
-    "youtu.be",       # example video links
-    "tiktok.com",     # example yt-dlp-supported link in plugin README
-}
+# URL prefixes these files legitimately reference. Platform hosts are
+# scoped to a path prefix (github.com/<org>/) -- never allowlist a whole
+# code/content platform. Anything else fails the build.
+ALLOWED_URL_PREFIXES = (
+    "https://github.com/pbnz/",             # this project + sibling repos
+    "https://github.com/bradautomates/",    # upstream project credit
+    "https://learn.microsoft.com/",         # PowerShell install instructions
+    "https://docs.pytest.org/",             # testing docs reference
+    "https://docs.docker.com/",             # legacy Docker-era CHANGELOG history
+    "https://www.docker.com/",              # legacy Docker-era CHANGELOG history
+    "https://www.youtube.com/watch",        # example video links
+    "https://youtube.com/watch",            # example video links
+    "https://youtu.be/",                    # example video links
+    "https://www.tiktok.com/",              # example yt-dlp-supported link
+)
 
 # ---------------------------------------------------------------------------
 # 1. Dangerous characters
@@ -72,7 +83,7 @@ def _is_stegano(ch: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# 2. Injection phrases
+# 2. Injection phrases (best-effort literal patterns)
 # ---------------------------------------------------------------------------
 
 INJECTION_PATTERNS = [
@@ -92,21 +103,44 @@ INJECTION_PATTERNS = [
 _COMPILED_INJECTION = [re.compile(p, re.IGNORECASE) for p in INJECTION_PATTERNS]
 
 # ---------------------------------------------------------------------------
-# 3. URLs
+# 3. Mixed-script words (homoglyph evasion)
 # ---------------------------------------------------------------------------
 
-URL_RE = re.compile(r"https?://([^/\s\)\]\>\"]+)", re.IGNORECASE)
+# Scripts with Latin-confusable letters. A single word mixing two of these
+# (e.g. 'Ignore' with a Cyrillic U+043E as its 'o') defeats the literal patterns above
+# while rendering identically -- flag it outright.
+_CONFUSABLE_SCRIPTS = ("LATIN", "CYRILLIC", "GREEK", "ARMENIAN", "COPTIC", "CHEROKEE")
+
+_WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
 
 
-def _normalise_host(host: str) -> str:
-    host = host.strip().lower().rstrip(".,;:!?\"'")
-    return host.split(":", 1)[0]
+def _letter_script(ch: str) -> str | None:
+    try:
+        name = unicodedata.name(ch)
+    except ValueError:
+        return None
+    first = name.split(" ", 1)[0]
+    return first if first in _CONFUSABLE_SCRIPTS else None
 
 
-def _host_allowed(host: str) -> bool:
-    return host in ALLOWED_HOSTS or any(
-        host.endswith("." + allowed) for allowed in ALLOWED_HOSTS
-    )
+def _mixed_scripts(word: str) -> set[str]:
+    scripts = {s for s in (_letter_script(c) for c in word) if s}
+    return scripts if len(scripts) > 1 else set()
+
+
+# ---------------------------------------------------------------------------
+# 4. URLs (prefix allowlist)
+# ---------------------------------------------------------------------------
+
+URL_RE = re.compile(r"https?://[^\s\)\]\>\"'`]+", re.IGNORECASE)
+
+
+def _normalise_url(url: str) -> str:
+    return url.strip().rstrip(".,;:!?").lower()
+
+
+def _url_allowed(url: str) -> bool:
+    return any(url.startswith(prefix) for prefix in ALLOWED_URL_PREFIXES)
 
 
 # ---------------------------------------------------------------------------
@@ -135,29 +169,56 @@ def scan_file(path: pathlib.Path) -> list[str]:
                 f"Suspicious steganographic character: {label}"
             )
 
-    for pattern in _COMPILED_INJECTION:
-        for match in pattern.finditer(text):
-            errors.append(
-                f"::error file={rel},line={line_of(match.start())}::"
-                f"Prompt-injection phrase detected: {match.group(0)!r}"
-            )
+    # Line-based passes so NFKC normalization (which shifts offsets) still
+    # reports accurate line numbers.
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        norm = unicodedata.normalize("NFKC", line)
 
-    for match in URL_RE.finditer(text):
-        host = _normalise_host(match.group(1))
-        if not _host_allowed(host):
-            errors.append(
-                f"::error file={rel},line={line_of(match.start())}::"
-                f"URL host not in allowlist: {host} "
-                f"(add to ALLOWED_HOSTS in scripts/ci/check_skill_safety.py if intentional)"
-            )
+        for pattern in _COMPILED_INJECTION:
+            for match in pattern.finditer(norm):
+                errors.append(
+                    f"::error file={rel},line={lineno}::"
+                    f"Prompt-injection phrase detected: {match.group(0)!r}"
+                )
+
+        for match in _WORD_RE.finditer(line):
+            scripts = _mixed_scripts(match.group(0))
+            if scripts:
+                errors.append(
+                    f"::error file={rel},line={lineno}::"
+                    f"Mixed-script word (homoglyph evasion risk): "
+                    f"{ascii(match.group(0))} mixes {' + '.join(sorted(scripts))}"
+                )
+
+        for match in URL_RE.finditer(line):
+            url = _normalise_url(match.group(0))
+            if not _url_allowed(url):
+                errors.append(
+                    f"::error file={rel},line={lineno}::"
+                    f"URL not in prefix allowlist: {url} "
+                    f"(add to ALLOWED_URL_PREFIXES in scripts/ci/check_skill_safety.py if intentional)"
+                )
 
     return errors
 
 
+def _discover_files() -> list[pathlib.Path]:
+    return sorted(
+        p for p in REPO_ROOT.rglob("*.md")
+        if not (set(p.relative_to(REPO_ROOT).parts[:-1]) & EXCLUDE_DIR_PARTS)
+    )
+
+
 def main() -> int:
-    files = sorted({p for g in SCAN_GLOBS for p in REPO_ROOT.glob(g)})
+    # Findings can quote non-ASCII content; Windows consoles default to a
+    # legacy codepage that would crash the report itself.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
+
+    files = _discover_files()
     if not files:
-        print("::error::no prompt-facing Markdown files found", file=sys.stderr)
+        print("::error::no Markdown files found", file=sys.stderr)
         return 1
 
     all_errors: list[str] = []
