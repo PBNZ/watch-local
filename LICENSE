@@ -1,6 +1,7 @@
 MIT License
 
 Copyright (c) 2026 Peter
+Portions Copyright (c) 2026 Bradley Bonanno (bradautomates/claude-video)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -20,4 +21,5 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-Ported from bradautomates/claude-video, also MIT-licensed.
+Ported from bradautomates/claude-video, also MIT-licensed; its copyright
+notice is retained above per the MIT license's notice-preservation clause.
