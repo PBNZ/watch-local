@@ -196,6 +196,48 @@ Describe 'Non-interactive two-run purge flow' {
         Test-Path $dir | Should -BeFalse
     }
 
+    It 'confirmed -OlderThanDays purge deletes old jobs AND keeps recent ones' {
+        # Guards the age partition in _GatherJobDirs: an inverted comparison
+        # would delete recent jobs while every refusal/DryRun test stays
+        # green. This is the only test that exercises a confirmed multi-job
+        # deletion end to end.
+        $oldDir    = _SeedJob -JobsRoot $S.JobsRoot -Slug 'ancient-job' -DaysOld 100
+        $recentDir = _SeedJob -JobsRoot $S.JobsRoot -Slug 'fresh-job'
+        $out1 = _RunSetup -LocalAppData $S.AppData -ArgList @('-PurgeJobs','-OlderThanDays','30')
+        $script:_lastCode | Should -Be 60
+        $out1 | Should -Match 'To proceed, type:\s+(PURGE-JOBS-[A-Z2-9]{6})'
+        $token = ([regex]'To proceed, type:\s+(PURGE-JOBS-[A-Z2-9]{6})').Match($out1).Groups[1].Value
+
+        _RunSetup -LocalAppData $S.AppData -ArgList @('-PurgeJobs','-OlderThanDays','30','-ConfirmToken',$token) | Out-Null
+        $script:_lastCode | Should -Be 0
+        Test-Path $oldDir    | Should -BeFalse
+        Test-Path $recentDir | Should -BeTrue
+    }
+
+    It 'confirmed PurgeAllJobs removes every job and nothing outside jobs_root' {
+        $dirA = _SeedJob -JobsRoot $S.JobsRoot -Slug 'all-a'
+        $dirB = _SeedJob -JobsRoot $S.JobsRoot -Slug 'all-b' -DaysOld 100
+        $sentinel = Join-Path $S.Sandbox 'OUTSIDE_SENTINEL.txt'
+        'do not touch' | Set-Content -LiteralPath $sentinel
+        $prior = $env:WATCH_LOCAL_I_REALLY_MEAN_IT
+        try {
+            $env:WATCH_LOCAL_I_REALLY_MEAN_IT = '1'
+            $out1 = _RunSetup -LocalAppData $S.AppData -ArgList @('-PurgeAllJobs','-Confirm')
+            $script:_lastCode | Should -Be 60
+            $out1 | Should -Match 'To proceed, type:\s+(PURGE-ALL-[A-Z2-9]{6})'
+            $token = ([regex]'To proceed, type:\s+(PURGE-ALL-[A-Z2-9]{6})').Match($out1).Groups[1].Value
+
+            _RunSetup -LocalAppData $S.AppData -ArgList @('-PurgeAllJobs','-Confirm','-AllConfirmToken',$token) | Out-Null
+            $script:_lastCode | Should -Be 0
+        } finally {
+            if ($prior) { $env:WATCH_LOCAL_I_REALLY_MEAN_IT = $prior }
+            else { Remove-Item Env:WATCH_LOCAL_I_REALLY_MEAN_IT -ErrorAction SilentlyContinue }
+        }
+        Test-Path $dirA | Should -BeFalse
+        Test-Path $dirB | Should -BeFalse
+        Test-Path $sentinel | Should -BeTrue
+    }
+
     It 'PurgeStaging: preview refuses, confirm run deletes staged leftovers only' {
         $stagingRoot = Join-Path $S.Sandbox 'staging'
         $leftover = Join-Path $stagingRoot 'dead-run-slug'

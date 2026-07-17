@@ -81,7 +81,11 @@ if ($Unit) {
         $cfg.Run.Exit = $false
         $cfg.Run.PassThru = $true
         $res = Invoke-Pester -Configuration $cfg
-        $summary.unit_pester = ($res.FailedCount -eq 0)
+        # Score on the overall result, NOT FailedCount: a .Tests.ps1 file
+        # with a discovery/parse error yields Result='Failed' with
+        # FailedCount=0 (the file's tests silently never ran), and that
+        # must fail the layer.
+        $summary.unit_pester = ($res.Result -eq 'Passed')
     }
 }
 

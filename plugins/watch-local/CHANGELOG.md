@@ -21,6 +21,15 @@
   in SECURITY.md.
 
 ### Fixed
+- **A Pester discovery/parse error no longer scores the unit layer PASS**
+  (#6). run-tests.ps1 scored on `FailedCount -eq 0`, which is true when a
+  broken `.Tests.ps1` silently drops all its tests; it now requires the
+  overall run result to be `Passed`.
+- **Destructive purge paths gained end-to-end deletion coverage** (#7):
+  a confirmed `-PurgeJobs -OlderThanDays` run must delete the old job AND
+  keep the recent one (guards the age-partition comparison), and a
+  confirmed `-PurgeAllJobs` run must remove every job while an
+  outside-root sentinel survives.
 - **Staged UNC copies leaked into `%TEMP%` on every failed/early-exit run
   and the staging free-space check ran after the copy** (#5, #15). The
   pipeline after staging now runs inside try/finally, so the staged copy
