@@ -21,6 +21,11 @@
   in SECURITY.md.
 
 ### Fixed
+- **The CUDA-whisper probe no longer breaks on install paths containing
+  a single quote** (#11, e.g. username O'Brien): the worker dir is
+  passed via env var instead of being interpolated into Python `-c`
+  source, where it was a SyntaxError that silently demoted a
+  CUDA-capable machine to CPU whisper.
 - **A merge-failed yt-dlp download is now a hard error instead of a
   silent 'no audio track in source'** (#10). `_pick_video` only accepts
   the real download/merge target (`video.<ext>`), never a leftover

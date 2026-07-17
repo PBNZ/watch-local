@@ -523,12 +523,18 @@ function Test-WLGpuNative {
 function Test-WLCudaWhisper {
     $py = Get-WLWorkerPython
     if (-not (Test-Path -LiteralPath $py)) { return $false }
-    $code = "import sys; sys.path.insert(0, r'$($script:WL_WORKER_DIR)'); " +
+    # The worker dir travels via env var, NOT interpolated into the -c
+    # source: a raw string literal cannot hold a single quote, so a path
+    # like C:\Users\O'Brien\... would be a Python SyntaxError and silently
+    # demote a fully CUDA-capable box to CPU whisper.
+    $code = "import os, sys; sys.path.insert(0, os.environ['WL_WORKER_DIR']); " +
             'import cuda_paths; cuda_paths.add_cuda_dll_dirs(); ' +
             'import ctranslate2; print(ctranslate2.get_cuda_device_count())'
     $orig = $ErrorActionPreference
+    $prevWorkerDir = $env:WL_WORKER_DIR
     try {
         $ErrorActionPreference = 'Continue'
+        $env:WL_WORKER_DIR = $script:WL_WORKER_DIR
         $out = @(& $py -c $code 2>$null)
         if ($LASTEXITCODE -ne 0 -or $out.Count -eq 0) { return $false }
         $n = 0
@@ -538,6 +544,8 @@ function Test-WLCudaWhisper {
         return $false
     } finally {
         $ErrorActionPreference = $orig
+        if ($null -ne $prevWorkerDir) { $env:WL_WORKER_DIR = $prevWorkerDir }
+        else { Remove-Item Env:WL_WORKER_DIR -ErrorAction SilentlyContinue }
     }
 }
 
