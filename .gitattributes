@@ -1,0 +1,3 @@
+# POSIX sh scripts must check out with LF everywhere: a CRLF .sh breaks
+# /bin/sh on Linux/macOS, and the SessionStart hook runs on every platform.
+*.sh text eol=lf

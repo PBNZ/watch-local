@@ -150,10 +150,14 @@ multi-GB artifacts out of `~/.claude`. The scripts never write runtime state
 into the plugin directory. **Uninstall = remove the plugin + delete this one
 folder.**
 
-The plugin's SessionStart hook is a tiny Node script (`hooks/scripts/
-check-setup.mjs`): a marker-file existence check, plus -- on Linux/macOS --
+The plugin's SessionStart hook is a tiny POSIX sh script (`hooks/scripts/
+check-setup.sh`): a marker-file existence check, plus -- on Linux/macOS --
 a clear "install PowerShell 7" error when `pwsh` is missing (pwsh is not
-preinstalled there; Node always exists because Claude Code runs on it).
+preinstalled there). `sh` is the one interpreter present wherever Claude
+Code can run hooks: /bin/sh on Linux/macOS, Git Bash on Windows (a hard
+requirement of the Windows install). Native Claude Code installs bundle
+their own runtime and do not put `node` on PATH, so a Node hook is not an
+option (#39).
 Fast by design -- SessionStart fires on every startup/resume/clear/compact.
 The full runtime preflight runs via `setup.ps1 -Check` in SKILL.md Step 0
 before each `/watch`.

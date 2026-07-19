@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## 0.6.2 -- 2026-07-19
+
+### Fixed
+- **SessionStart hook no longer requires a system Node** (#39). The hook
+  is now a POSIX `sh` script (`check-setup.sh`) invoked with `sh`, which
+  is present wherever Claude Code can run hooks: `/bin/sh` on
+  Linux/macOS, Git Bash on Windows (a hard requirement of the Windows
+  install). Native Claude Code installs bundle their own runtime and do
+  not put `node` on PATH, so the previous `node check-setup.mjs`
+  invocation failed with exit 127 on every session start -- silently
+  killing both the "/watch-setup never completed" nudge and the
+  Linux/macOS missing-pwsh pre-flight. Behavior is unchanged; only the
+  interpreter is. A new `.gitattributes` pins `*.sh` to LF so the script
+  cannot check out with CRLF line endings (which would break `/bin/sh`).
+
 ## 0.6.1 -- 2026-07-17
 
 Patch release so the distribution zip matches main exactly.
