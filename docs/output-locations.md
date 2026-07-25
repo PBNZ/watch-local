@@ -16,6 +16,15 @@ Every `/watch` call writes artifacts to:
 
 These persist indefinitely. Nothing is auto-cleaned.
 
+`benchmark.ps1` writes alongside them, never into the plugin dir:
+
+```
+%LOCALAPPDATA%\watch-local\benchmarks\<timestamp>\
+  report.md  results.json  results.csv  quality.json
+  transcripts\transcript-<model>.json
+  work\                   # the audio every model transcribed
+```
+
 Override per-call: `-OutDir <path>` -- artifacts go directly there.
 
 Override the default for ALL future calls:

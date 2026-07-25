@@ -96,6 +96,9 @@ $script:WL_DEFAULT_CONFIG = [ordered]@{
     default_model          = 'large-v3'
     default_language       = $null
     auto_cleanup_days      = $null
+    # null = let the worker size itself to the machine. Pin an int to cap
+    # CPU transcription threads (shared box, thermals, benchmarking).
+    cpu_threads            = $null
     min_free_gb_jobs       = 2
     min_free_gb_staging    = 1
     min_free_gb_models     = 4

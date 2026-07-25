@@ -134,12 +134,22 @@ if ($gpuPresent) {
     Write-Output '  medium    ~1.5 GB     good quality, faster'
     Write-Output '  small     ~500 MB     decent for English-heavy content'
 } else {
-    Write-Output '  large-v3  ~3.0 GB     best quality -- SLOW on CPU (can approach real-time)'
-    Write-Output '  medium    ~1.5 GB     good quality, still heavy on CPU'
-    Write-Output '  small     ~500 MB     recommended on CPU -- good speed/quality balance'
+    Write-Output '  large-v3  ~3.0 GB     best quality -- NOT practical on CPU (see note below)'
+    Write-Output '  medium    ~1.5 GB     good quality, ~2x real-time on CPU'
+    Write-Output '  small     ~500 MB     recommended on CPU -- ~6x real-time, good balance'
 }
 Write-Output '  base      ~150 MB     fast smoke testing'
 Write-Output '  tiny      ~75 MB      smoke testing only'
+if (-not $gpuPresent) {
+    # Measured, not folklore: a 6-core laptop took 57 min to transcribe a
+    # 33-min video with large-v3, and small/medium matched it on clean
+    # English. Set expectations before the user picks the biggest name.
+    Write-Output ''
+    Write-Output 'On CPU, model choice dominates run time. In our reference CPU run'
+    Write-Output '(6-core laptop, 33-minute video): tiny 1m18, small 5m54, medium 16m48,'
+    Write-Output 'large-v3 57m29 -- slower than the video itself, for no accuracy gain'
+    Write-Output 'over medium on clean English. Numbers + caveats: docs/benchmarks.md.'
+}
 $recommended = if ($gpuPresent) { 'large-v3' } else { 'small' }
 $pickedModel = if ($Model) { $Model } else { _Prompt 'Which model?' $recommended }
 # The interactive reply is free text; a typo persisted to

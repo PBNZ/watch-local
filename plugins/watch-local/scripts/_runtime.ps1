@@ -24,6 +24,8 @@ $script:WL_RUNTIME_TMP    = Join-Path $script:WL_RUNTIME_DIR 'tmp'
 $script:WL_RUNTIME_STATE  = Join-Path $script:WL_RUNTIME_DIR 'manifest.json'
 $script:WL_RUNTIME_PINS   = Join-Path $PSScriptRoot 'runtime-manifest.json'
 $script:WL_WORKER_DIR     = Join-Path $PSScriptRoot 'worker'
+# Filled on first Get-WLPhysicalCoreCount call; $null = not probed yet.
+$script:WL_PHYSICAL_CORES = $null
 
 function Get-WLExeSuffix { if ($script:WL_IS_WINDOWS) { return '.exe' } return '' }
 
@@ -585,11 +587,143 @@ function Get-WLToolsWorkerEnv {
     return @{}
 }
 
+# Every PID in a process tree, root first.
+#
+# Measuring the launched PID alone is wrong on Windows: the uv venv's
+# Scripts\python.exe is a ~45 KB trampoline that spawns the real
+# interpreter and waits, so the process we start reports ~5 MB RSS and
+# ~0 CPU while a child does all the work. Benchmarks must sum the tree.
+function Get-WLProcessTreeIds {
+    param([Parameter(Mandatory)][int]$RootId)
+    $ids = [System.Collections.Generic.List[int]]::new()
+    $ids.Add($RootId)
+    $childrenOf = @{}
+    # A genuine descendant cannot have started before the root did.
+    # Windows never clears ParentProcessId when a parent dies and recycles
+    # PIDs aggressively, so without this an orphan whose long-dead parent
+    # held our PID gets adopted into the tree -- and its whole lifetime of
+    # CPU and RSS lands in the benchmark's numbers.
+    $rootStart = $null
+    try {
+        if ($script:WL_IS_WINDOWS) {
+            $rows = @(Get-CimInstance -ClassName Win32_Process -Property ProcessId, ParentProcessId, CreationDate -ErrorAction Stop)
+            foreach ($p in $rows) { if ([int]$p.ProcessId -eq $RootId) { $rootStart = $p.CreationDate; break } }
+            foreach ($p in $rows) {
+                if ($null -ne $rootStart -and $null -ne $p.CreationDate -and $p.CreationDate -lt $rootStart) { continue }
+                $parent = [int]$p.ParentProcessId
+                if (-not $childrenOf.ContainsKey($parent)) { $childrenOf[$parent] = [System.Collections.Generic.List[int]]::new() }
+                $childrenOf[$parent].Add([int]$p.ProcessId)
+            }
+        } else {
+            $rows = @(Get-Process -ErrorAction SilentlyContinue)
+            foreach ($p in $rows) {
+                if ([int]$p.Id -eq $RootId) { try { $rootStart = $p.StartTime } catch { } ; break }
+            }
+            foreach ($p in $rows) {
+                $childStart = $null
+                try { $childStart = $p.StartTime } catch { }
+                if ($null -ne $rootStart -and $null -ne $childStart -and $childStart -lt $rootStart) { continue }
+                $parent = $null
+                try { $parent = $p.Parent } catch { $parent = $null }
+                if ($null -ne $parent) {
+                    $parentId = [int]$parent.Id
+                    if (-not $childrenOf.ContainsKey($parentId)) { $childrenOf[$parentId] = [System.Collections.Generic.List[int]]::new() }
+                    $childrenOf[$parentId].Add([int]$p.Id)
+                }
+            }
+        }
+    } catch {
+        return $ids   # tree unknown -- the root alone is still a valid answer
+    }
+    $queue = [System.Collections.Generic.Queue[int]]::new()
+    $queue.Enqueue($RootId)
+    while ($queue.Count -gt 0) {
+        $current = $queue.Dequeue()
+        if (-not $childrenOf.ContainsKey($current)) { continue }
+        foreach ($child in $childrenOf[$current]) {
+            # A PID cannot be its own ancestor; guard anyway so recycled
+            # PIDs can never spin this loop forever.
+            if (-not $ids.Contains($child)) {
+                $ids.Add($child)
+                $queue.Enqueue($child)
+            }
+        }
+    }
+    return $ids
+}
+
+# Physical cores, or $null when this platform will not say.
+#
+# Measured on a 16C/24T hybrid CPU (small, cpu/int8, 8.6 min audio):
+# 4 threads (the faster-whisper default) 159.7 s, 8 -> 127.0 s,
+# 12 -> 122.7 s, 16 -> 128.8 s, 24 (every logical CPU) -> 151.7 s.
+# Scaling saturates around the physical core count and oversubscribing
+# SMT siblings gives most of the win back, so "all logical CPUs" is the
+# wrong default -- physical cores lands on the plateau on both SMT and
+# non-SMT (Apple Silicon) machines. Cached: the CIM query is not free.
+function Get-WLPhysicalCoreCount {
+    if ($null -ne $script:WL_PHYSICAL_CORES) { return $script:WL_PHYSICAL_CORES }
+    $cores = $null
+    try {
+        if ($script:WL_IS_WINDOWS) {
+            # -Property matters: a bare Win32_Processor query also
+            # materialises LoadPercentage, which forces a ~1 s
+            # performance-counter sample. This runs on every unpinned
+            # CPU /watch, so 8 ms vs 1.1 s is worth the extra argument.
+            $sum = 0
+            foreach ($cpu in @(Get-CimInstance -ClassName Win32_Processor -Property NumberOfCores -ErrorAction Stop)) {
+                $sum += [int]$cpu.NumberOfCores
+            }
+            if ($sum -gt 0) { $cores = $sum }
+        } elseif ($IsLinux) {
+            # Unique (physical id, core id) pairs. Both fields are absent
+            # on many ARM and VM kernels, where this yields nothing and
+            # we fall back rather than guess. A kernel that prints
+            # "core id" but no "physical id" would undercount a
+            # multi-socket host -- an accepted floor, since too few
+            # threads is merely slower while too many is measurably
+            # worse.
+            $pairs = @{}
+            $physical = ''
+            foreach ($line in [System.IO.File]::ReadAllLines('/proc/cpuinfo')) {
+                if ($line -match '^physical id\s*:\s*(\d+)') { $physical = $Matches[1] }
+                elseif ($line -match '^core id\s*:\s*(\d+)') { $pairs["$physical/$($Matches[1])"] = $true }
+            }
+            if ($pairs.Count -gt 0) { $cores = $pairs.Count }
+        } elseif ($IsMacOS) {
+            $out = & sysctl -n hw.physicalcpu 2>$null
+            $n = 0
+            if ($LASTEXITCODE -eq 0 -and [int]::TryParse(([string]$out).Trim(), [ref]$n) -and $n -gt 0) {
+                $cores = $n
+            }
+        }
+    } catch {
+        $cores = $null
+    }
+    # Never hand out more CPUs than this process may use: ProcessorCount
+    # honours affinity masks, so a pinned or cgroup-limited run stays
+    # inside its budget.
+    if ($null -ne $cores) {
+        $allowed = [Environment]::ProcessorCount
+        if ($allowed -gt 0 -and $cores -gt $allowed) { $cores = $allowed }
+    }
+    $script:WL_PHYSICAL_CORES = $cores
+    return $cores
+}
+
 # Whisper: cuda/float16 only when the venv-level CUDA probe passed too;
 # a GPU without working CUDA wheels degrades to cpu/int8, never to a
 # failed run.
 function Get-WLWhisperWorkerEnv {
-    param($Gpu, [Parameter(Mandatory)][string]$ModelsRoot)
+    param(
+        $Gpu,
+        [Parameter(Mandatory)][string]$ModelsRoot,
+        # config.cpu_threads: $null lets the worker size itself to the
+        # machine (see resolve_cpu_threads). Only forwarded on CPU -- the
+        # setting is documented as CPU-only and a GPU run has no use for
+        # pinned host threads.
+        $CpuThreads = $null
+    )
     $present = Get-WLObjectProp $Gpu 'present'
     $cudaWhisper = Get-WLObjectProp $Gpu 'cuda_whisper'
     # Symlink warning off: without Windows Developer Mode huggingface_hub
@@ -605,6 +739,15 @@ function Get-WLWhisperWorkerEnv {
     } else {
         $vars.W_DEVICE = 'cpu'
         $vars.W_COMPUTE = 'int8'
+        if ($null -ne $CpuThreads -and [int]$CpuThreads -ge 0) {
+            $vars.W_CPU_THREADS = [string][int]$CpuThreads
+        } else {
+            # No pin: size to physical cores. When the platform will not
+            # say, leave the var unset and let the worker's own fallback
+            # decide -- an unset var is auto, never 4.
+            $cores = Get-WLPhysicalCoreCount
+            if ($null -ne $cores -and $cores -gt 0) { $vars.W_CPU_THREADS = [string]$cores }
+        }
     }
     return $vars
 }

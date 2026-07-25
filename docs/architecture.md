@@ -162,6 +162,12 @@ Fast by design -- SessionStart fires on every startup/resume/clear/compact.
 The full runtime preflight runs via `setup.ps1 -Check` in SKILL.md Step 0
 before each `/watch`.
 
+`scripts/benchmark.ps1` drives the same whisper worker across models (or
+across `cpu_threads` values) and writes timing, per-process resource use,
+and `worker/quality.py` WER scores to `<state root>/benchmarks/<stamp>/`.
+It is how the numbers in [benchmarks.md](benchmarks.md) are produced; see
+[benchmarking.md](benchmarking.md) for the method.
+
 ## Transcript policy (always run Whisper)
 
 Local Whisper transcribes **every** run (when there is an audio track).

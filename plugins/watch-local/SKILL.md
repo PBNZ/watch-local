@@ -258,6 +258,7 @@ What this skill does NOT do:
 - `scripts/save-here.ps1` -- promote job to CWD
 - `scripts/grab-frames.ps1` -- native-resolution stills from an existing job (`/watch:grab-frames`)
 - `scripts/build-zip.ps1` -- dist build for marketplace zip
+- `scripts/benchmark.ps1` -- per-model timing / resource / quality benchmark
 - `scripts/_lib.ps1` -- shared helpers (exit codes, paths, config, confirm)
 - `scripts/_runtime.ps1` -- portable runtime: provisioning, `Invoke-WLWorker`, GPU probes
 - `scripts/runtime-manifest.json` -- pinned tool versions, URLs, sha256 hashes
@@ -265,6 +266,7 @@ What this skill does NOT do:
 - `scripts/worker/whisper_run.py` -- faster-whisper transcription
 - `scripts/worker/cuda_paths.py` -- Windows DLL-path shim for the pip CUDA wheels
 - `scripts/worker/compare.py` -- creator-vs-whisper similarity
+- `scripts/worker/quality.py` -- WER / Jaccard scoring for the benchmark
 - `scripts/worker/frames.py` -- auto-fps + ffmpeg extraction (+ native stills)
 - `scripts/worker/stills.py` -- on-demand native-resolution still extraction
 - `scripts/worker/formats.py` -- shared yt-dlp format selector (download + probe)

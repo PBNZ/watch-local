@@ -32,7 +32,7 @@ mode. No cloud API keys, no admin rights, nothing installed on the system
 <!-- state:begin keys=overall_status,gpu_support,platform_support -->
 | Fact | Value | As of |
 |---|---|---|
-| Release status | 0.6.2 (stable release) | 2026-07-19 |
+| Release status | 0.7.0 (stable release) | 2026-07-25 |
 | GPU / compute support | auto-detected -- NVDEC decode + CUDA whisper on NVIDIA GPUs, CPU-only fallback (int8) otherwise | 2026-07-14 |
 | Host platform support | Windows 11 (primary, best-tested); Linux x64 / macOS arm64 via PowerShell 7, CPU mode (newer, less tested) | 2026-07-14 |
 <!-- state:end -->
@@ -52,6 +52,8 @@ mode. No cloud API keys, no admin rights, nothing installed on the system
   on-demand native-res screenshots (`-Screenshots`)
 - SMB / UNC source support (auto-staged)
 - Disk-space pre-flight, scope-safe purge tools
+- Benchmark harness (`scripts/benchmark.ps1`) -- per-model timing,
+  resource use, and WER on your own hardware
 
 ## Prerequisites
 
@@ -79,8 +81,29 @@ Nothing touches PATH, the registry, or Program Files. **Deleting
 `%LOCALAPPDATA%\watch-local\` removes everything.**
 
 No NVIDIA GPU? Setup configures **CPU-only mode** automatically:
-everything works, transcription is just slower (the wizard recommends the
-`small` model there). Linux x64 and macOS (Apple Silicon) hosts with
+everything works, transcription is just slower -- and *which model you
+pick starts to matter a lot*:
+
+| Model | CPU speed vs real-time | GPU speed vs real-time | Use it when |
+|---|---:|---:|---|
+| `tiny` | 25x | 30x | drafts, smoke tests -- drops proper nouns |
+| `base` | 15x | 26x | long content on CPU |
+| `small` | 5.6x | 18x | **what the wizard recommends on CPU** -- best balance |
+| `medium` | 2.0x | 12x | accuracy-first on CPU, if you can wait |
+| `large-v3` | **0.57x** | 8.3x | the shipped default; impractical on CPU |
+
+The two columns come from different machines and different clips, so
+compare *within* a column, not across it. The CPU column is **contributed
+data** from a 6-core laptop on a 33-min video (issue #36); the GPU column
+was measured on an RTX PRO 5000 with a 9-min video.
+
+On CPU, `large-v3` took **57 minutes for a 33-minute video** and gained
+nothing over `medium` on clean English; on a GPU it is 8x real-time.
+Full numbers, hardware, and caveats:
+[`docs/benchmarks.md`](./docs/benchmarks.md) -- reproduce them on your
+own machine with [`docs/benchmarking.md`](./docs/benchmarking.md).
+
+Linux x64 and macOS (Apple Silicon) hosts with
 PowerShell 7 (`pwsh`) work in CPU mode but are newer and less tested.
 Note that **pwsh is not preinstalled on Linux/macOS** -- install it first
 (macOS: `brew install powershell`; Linux: Microsoft package repo or snap;
@@ -172,6 +195,7 @@ inspected / changed via:
 powershell -File <plugin>\scripts\setup.ps1 -ShowConfig
 powershell -File <plugin>\scripts\setup.ps1 -SetJobsRoot D:\watch-jobs
 powershell -File <plugin>\scripts\setup.ps1 -SetDefaultModel medium
+powershell -File <plugin>\scripts\setup.ps1 -SetCpuThreads 8  # cap CPU transcription threads
 powershell -File <plugin>\scripts\setup.ps1 -UpdateYtDlp    # YouTube broke? update yt-dlp
 powershell -File <plugin>\scripts\setup.ps1 -UpdateRuntime  # re-converge to pinned versions
 ```
@@ -182,6 +206,8 @@ Defaults (Windows; on Linux/macOS the base is `$XDG_DATA_HOME` or
 - `models_root`  = `%LOCALAPPDATA%\watch-local\models`
 - `staging_root` = `%TEMP%\watch-local-stage`
 - `default_model` = `large-v3`
+- `cpu_threads`  = unset (CPU transcription sizes itself to the machine;
+  pin an int to cap it, `-UnsetCpuThreads` to go back to auto)
 - `gpu`          = detection result (`setup.ps1 -DetectGpu` re-probes)
 
 ## Safety

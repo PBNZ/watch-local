@@ -2,6 +2,76 @@
 
 ## [Unreleased]
 
+## 0.7.0 -- 2026-07-25
+
+Performance and measurement release: CPU transcription now uses the
+whole machine, 2x hallucination loops no longer slip through unflagged,
+and there is a benchmark harness so any of this can be checked on your
+own hardware instead of taken on faith.
+
+### Added
+- **`benchmark.ps1` -- a repeatable cross-platform benchmark harness**
+  (#37). Measures per-model wall time, speed vs real-time, mean core
+  usage, peak RSS, and WER/Jaccard against creator captions, then emits
+  `report.md` + `results.json` + `results.csv`. Reuse an existing job
+  (`-Slug last`), a bare audio file (`-AudioPath`), or the default
+  reference clip; `-Device cpu` produces CPU numbers on a GPU box and
+  `-CpuThreads 0,4,8,16` sweeps thread counts. Resource sampling is
+  per-process (`Get-Process`), which reports identically on Windows,
+  Linux, and macOS -- system-wide CPU is deliberately not collected, as
+  it has no portable implementation and measures the machine rather than
+  the model. Sampling walks the process tree, because on Windows the uv
+  venv's `python.exe` is a trampoline whose child does all the work, and
+  it ignores processes older than the run so a recycled PID cannot fold
+  a stranger's CPU into the numbers. Every report states its **caption
+  provenance**: WER against human-edited creator captions is a quality
+  signal, WER against the platform's own auto-captions only measures
+  drift between two recognisers, and conflating them would publish the
+  second as the first. Method and caveats: `docs/benchmarking.md`.
+- **`worker/quality.py`** -- word-level WER (Levenshtein) and word-set
+  Jaccard against creator captions, plus each model against the largest,
+  on the same normalised tokens `compare.py` uses.
+- **`docs/benchmarks.md`** (#36) -- published per-model guidance and the
+  CPU reference numbers, with the hardware and caveats attached.
+  `/watch-setup`'s model picker and `/watch`'s large-v3 warning now cite
+  the measured CPU times instead of a vague "slow".
+- **`cpu_threads` config setting** -- `setup.ps1 -SetCpuThreads N` pins
+  CPU transcription threads (0 restores faster-whisper's own default),
+  `-UnsetCpuThreads` returns to auto-sizing.
+
+### Fixed
+- **CPU transcription used ~4 threads on any machine** (#34).
+  faster-whisper's `cpu_threads=0` default resolves inside ctranslate2
+  to `OMP_NUM_THREADS` or 4 -- a constant, not a function of the host --
+  so a 12-thread laptop transcribed on 4 threads and left the rest idle.
+  Unpinned CPU runs now size themselves to the machine's **physical core
+  count**, which measurement puts on the plateau: on a 16C/24T box,
+  4 threads took 159.7 s, 16 took 128.8 s, and 24 -- every logical CPU --
+  fell back to 151.7 s, so "use everything" is nearly as bad as the old
+  default. The count is capped by process affinity, so `taskset` and
+  cgroup limits still hold, and `W_CPU_THREADS` (or `-SetCpuThreads`)
+  overrides. GPU runs keep the library default: pinning host threads
+  buys a CUDA run nothing.
+- **2x repetition loops passed through silently** (#35). The collapser
+  only acted on runs of 3 or more, so a doubled hallucination was
+  neither collapsed nor recorded in `repetition_runs` -- the report
+  showed no "unreliable span" caveat. A doubled segment is now caught
+  when the repeat could not physically have been spoken in the time it
+  claims (observed: a 15-word clause twice inside 0.2 s). The rate is
+  judged on the *fastest* occurrence rather than the run average,
+  because the usual loop is a normally-paced segment followed by a
+  near-instant copy that an average would hide. Genuine speech is left
+  alone from both directions: a repeat needs at least four words before
+  rate is considered at all, and the ceiling (12 words/sec) sits above
+  the fastest documented human speech, so rapped or chanted repeats
+  survive while a stuck decode overshoots it tenfold. Replayed over
+  8,477 segments of real transcripts the rule fires 4 times (0.05%),
+  every one of them an unmistakable loop.
+
+### Changed
+- `transcript_whisper.json` records `device`, `compute_type`, and
+  `cpu_threads` for provenance.
+
 ## 0.6.2 -- 2026-07-19
 
 ### Fixed

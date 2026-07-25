@@ -70,6 +70,111 @@ Describe 'Whisper worker env selection' {
         $gpu = [pscustomobject]@{ present = $true; nvdec = $true }
         (Get-WLWhisperWorkerEnv -Gpu $gpu -ModelsRoot $modelsRoot).W_DEVICE | Should -Be 'cpu'
     }
+
+    # cpu_threads (#34). Unpinned CPU runs auto-size to physical cores;
+    # a platform that will not report them leaves the var unset so the
+    # worker's own fallback decides -- either way, never a flat 4.
+    It 'auto-sizes W_CPU_THREADS on CPU when no pin is configured' {
+        $gpu = [pscustomobject]@{ present = $false; cuda_whisper = $false }
+        $cores = Get-WLPhysicalCoreCount
+        foreach ($v in @(
+            (Get-WLWhisperWorkerEnv -Gpu $gpu -ModelsRoot $modelsRoot),
+            (Get-WLWhisperWorkerEnv -Gpu $gpu -ModelsRoot $modelsRoot -CpuThreads $null)
+        )) {
+            if ($null -eq $cores) {
+                $v.Keys | Should -Not -Contain 'W_CPU_THREADS'
+            } else {
+                $v.W_CPU_THREADS | Should -Be ([string]$cores)
+            }
+        }
+    }
+
+    It 'forwards a configured pin on CPU' {
+        $gpu = [pscustomobject]@{ present = $false; cuda_whisper = $false }
+        (Get-WLWhisperWorkerEnv -Gpu $gpu -ModelsRoot $modelsRoot -CpuThreads 6).W_CPU_THREADS | Should -Be '6'
+    }
+
+    It 'forwards an explicit 0 (restores the faster-whisper default)' {
+        $gpu = [pscustomobject]@{ present = $false; cuda_whisper = $false }
+        (Get-WLWhisperWorkerEnv -Gpu $gpu -ModelsRoot $modelsRoot -CpuThreads 0).W_CPU_THREADS | Should -Be '0'
+    }
+
+    It 'treats a negative pin as no pin (auto-sizes instead of passing garbage)' {
+        $gpu = [pscustomobject]@{ present = $false; cuda_whisper = $false }
+        $v = Get-WLWhisperWorkerEnv -Gpu $gpu -ModelsRoot $modelsRoot -CpuThreads -3
+        $cores = Get-WLPhysicalCoreCount
+        if ($null -eq $cores) {
+            $v.Keys | Should -Not -Contain 'W_CPU_THREADS'
+        } else {
+            $v.W_CPU_THREADS | Should -Be ([string]$cores)
+        }
+    }
+
+    It 'never pins threads on a GPU run' {
+        $gpu = [pscustomobject]@{ present = $true; cuda_whisper = $true }
+        $v = Get-WLWhisperWorkerEnv -Gpu $gpu -ModelsRoot $modelsRoot -CpuThreads 6
+        $v.W_DEVICE | Should -Be 'cuda'
+        $v.Keys | Should -Not -Contain 'W_CPU_THREADS'
+    }
+}
+
+Describe 'Process tree discovery' {
+    It 'always includes the root pid' {
+        (Get-WLProcessTreeIds -RootId $PID) | Should -Contain $PID
+    }
+
+    It 'finds a spawned child (the uv trampoline case benchmarks depend on)' {
+        # Any child will do; the point is that descendants are reachable.
+        # -NoNewWindow, not -WindowStyle: the latter is a terminating
+        # error on non-Windows PowerShell, which would take this test --
+        # and all Linux coverage of the tree walk -- out entirely.
+        $sleeper = Start-Process -FilePath (Get-Process -Id $PID).Path `
+                                 -ArgumentList @('-NoProfile', '-Command', 'Start-Sleep -Seconds 6') `
+                                 -PassThru -NoNewWindow
+        try {
+            Start-Sleep -Milliseconds 1500
+            $ids = @(Get-WLProcessTreeIds -RootId $PID)
+            $ids | Should -Contain $sleeper.Id
+        } finally {
+            Stop-Process -Id $sleeper.Id -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'returns just the root for a pid with no children' {
+        $ids = @(Get-WLProcessTreeIds -RootId 999999)
+        $ids.Count | Should -Be 1
+        $ids[0] | Should -Be 999999
+    }
+
+    It 'does not adopt processes that started before the root (recycled PID guard)' {
+        # Every live process older than this shell would be swept in if
+        # the walk trusted parent ids alone; the tree must stay small.
+        $ids = @(Get-WLProcessTreeIds -RootId $PID)
+        $ids.Count | Should -BeLessThan 40
+        foreach ($id in $ids) {
+            if ($id -eq $PID) { continue }
+            $child = Get-Process -Id $id -ErrorAction SilentlyContinue
+            if ($child) {
+                try { $child.StartTime | Should -BeGreaterOrEqual (Get-Process -Id $PID).StartTime } catch { }
+            }
+        }
+    }
+}
+
+Describe 'Physical core detection' {
+    It 'returns a positive count or null, never zero or negative' {
+        $cores = Get-WLPhysicalCoreCount
+        if ($null -ne $cores) { $cores | Should -BeGreaterThan 0 }
+    }
+
+    It 'never exceeds the CPUs this process may use' {
+        $cores = Get-WLPhysicalCoreCount
+        if ($null -ne $cores) { $cores | Should -BeLessOrEqual ([Environment]::ProcessorCount) }
+    }
+
+    It 'is stable across calls (cached)' {
+        Get-WLPhysicalCoreCount | Should -Be (Get-WLPhysicalCoreCount)
+    }
 }
 
 Describe 'Tools worker env (NVDEC decode)' {

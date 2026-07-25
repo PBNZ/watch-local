@@ -18,6 +18,8 @@
         -SetDefaultModel <name>   default whisper model for /watch
         -SetAutoCleanupDays <n>   warn on /watch if jobs older than n days exist
         -UnsetAutoCleanupDays     disable above
+        -SetCpuThreads <n>        pin CPU transcription threads (0 = library default)
+        -UnsetCpuThreads          back to auto-sizing (physical cores)
         -ListJobs                 read-only table of jobs
         -ListModels               read-only table of cached whisper models
         -PurgeJobs -OlderThanDays N [-DryRun] [-ConfirmToken T]
@@ -69,6 +71,11 @@ param(
     [int]$SetAutoCleanupDays = -1,
     [Parameter(ParameterSetName='UnsetAutoCleanupDays')]
     [switch]$UnsetAutoCleanupDays,
+
+    [Parameter(ParameterSetName='SetCpuThreads')]
+    [int]$SetCpuThreads = -1,
+    [Parameter(ParameterSetName='UnsetCpuThreads')]
+    [switch]$UnsetCpuThreads,
 
     [Parameter(ParameterSetName='ListJobs')]
     [switch]$ListJobs,
@@ -355,6 +362,38 @@ function _UnsetAutoCleanupDaysCmd {
     $cfg.auto_cleanup_days = $null
     Save-WLConfig $cfg
     Write-Stage 'auto_cleanup_days disabled'
+    exit 0
+}
+function _SetCpuThreadsCmd {
+    # 0 is meaningful: it hands the choice back to faster-whisper, whose
+    # own default is 4 threads on any machine size.
+    if ($SetCpuThreads -lt 0) {
+        Write-Err 'cpu_threads must be >= 0 (0 = faster-whisper default). Use -UnsetCpuThreads to auto-size.'
+        exit 2
+    }
+    $logical = [Environment]::ProcessorCount
+    if ($SetCpuThreads -gt $logical) {
+        Write-Warn "cpu_threads=$SetCpuThreads exceeds this machine's $logical logical CPUs -- oversubscribing usually slows transcription down."
+    }
+    $cfg = _EnsureConfig
+    $cfg.cpu_threads = $SetCpuThreads
+    Save-WLConfig $cfg
+    Write-Stage "cpu_threads set to $SetCpuThreads (CPU transcription only; GPU runs are unaffected)"
+    exit 0
+}
+function _UnsetCpuThreadsCmd {
+    $cfg = _EnsureConfig
+    $cfg.cpu_threads = $null
+    Save-WLConfig $cfg
+    # Name the number auto-sizing will actually use -- physical cores,
+    # not the logical count, which on an SMT machine is nearly double.
+    $cores = Get-WLPhysicalCoreCount
+    $detail = if ($null -ne $cores) {
+        "$cores physical core(s) here"
+    } else {
+        "this platform does not report physical cores, so the worker falls back to all $([Environment]::ProcessorCount) available CPUs"
+    }
+    Write-Stage "cpu_threads cleared -- CPU transcription sizes itself to the machine ($detail)"
     exit 0
 }
 #endregion
@@ -651,6 +690,8 @@ switch ($PSCmdlet.ParameterSetName) {
     'SetDefaultModel'        { _SetDefaultModelCmd }
     'SetAutoCleanupDays'     { _SetAutoCleanupDaysCmd }
     'UnsetAutoCleanupDays'   { _UnsetAutoCleanupDaysCmd }
+    'SetCpuThreads'          { _SetCpuThreadsCmd }
+    'UnsetCpuThreads'        { _UnsetCpuThreadsCmd }
     'ListJobs'               { _ListJobs }
     'ListModels'             { _ListModels }
     'PurgeJobs'              { _PurgeJobsCmd }
