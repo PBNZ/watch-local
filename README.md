@@ -32,7 +32,7 @@ mode. No cloud API keys, no admin rights, nothing installed on the system
 <!-- state:begin keys=overall_status,gpu_support,platform_support -->
 | Fact | Value | As of |
 |---|---|---|
-| Release status | 0.7.0 (stable release) | 2026-07-25 |
+| Release status | 0.7.1 (stable release) | 2026-07-26 |
 | GPU / compute support | auto-detected -- NVDEC decode + CUDA whisper on NVIDIA GPUs, CPU-only fallback (int8) otherwise | 2026-07-14 |
 | Host platform support | Windows 11 (primary, best-tested); Linux x64 / macOS arm64 via PowerShell 7, CPU mode (newer, less tested) | 2026-07-14 |
 <!-- state:end -->
@@ -84,21 +84,26 @@ No NVIDIA GPU? Setup configures **CPU-only mode** automatically:
 everything works, transcription is just slower -- and *which model you
 pick starts to matter a lot*:
 
+All measured on the same 33-minute video (see
+[`docs/benchmarking.md`](./docs/benchmarking.md#the-reference-video)):
+
 | Model | CPU speed vs real-time | GPU speed vs real-time | Use it when |
 |---|---:|---:|---|
-| `tiny` | 25x | 30x | drafts, smoke tests -- drops proper nouns |
-| `base` | 15x | 26x | long content on CPU |
-| `small` | 5.6x | 18x | **what the wizard recommends on CPU** -- best balance |
-| `medium` | 2.0x | 12x | accuracy-first on CPU, if you can wait |
-| `large-v3` | **0.57x** | 8.3x | the shipped default; impractical on CPU |
+| `tiny` | 16-25x | 35.7x | drafts, smoke tests -- drops proper nouns |
+| `base` | 10-15x | 35.4x | long content on CPU |
+| `small` | 3.5-5.6x | 22.1x | **what the wizard recommends on CPU** -- the accuracy knee |
+| `medium` | 1.3-2.0x | 13.4x | accuracy-first on CPU, if you can wait |
+| `large-v3` | **0.44-0.57x** | 4.8x | the shipped default; impractical on CPU |
 
-The two columns come from different machines and different clips, so
-compare *within* a column, not across it. The CPU column is **contributed
-data** from a 6-core laptop on a 33-min video (issue #36); the GPU column
-was measured on an RTX PRO 5000 with a 9-min video.
+The CPU range spans the two machines measured -- a 6-core laptop
+(contributed, issue #36) and a 16-core workstation, which is the *slower*
+of the two. CPU transcription barely parallelises (it uses ~3 cores
+whatever you give it), so core count predicts very little; the GPU column
+is one RTX PRO 5000.
 
-On CPU, `large-v3` took **57 minutes for a 33-minute video** and gained
-nothing over `medium` on clean English; on a GPU it is 8x real-time.
+On CPU, `large-v3` took **57 to 75 minutes for a 33-minute video** and
+scored *worse* against human captions than `medium` did in a third of the
+time; on a GPU it is ~5x real-time and the model choice barely matters.
 Full numbers, hardware, and caveats:
 [`docs/benchmarks.md`](./docs/benchmarks.md) -- reproduce them on your
 own machine with [`docs/benchmarking.md`](./docs/benchmarking.md).
@@ -206,8 +211,8 @@ Defaults (Windows; on Linux/macOS the base is `$XDG_DATA_HOME` or
 - `models_root`  = `%LOCALAPPDATA%\watch-local\models`
 - `staging_root` = `%TEMP%\watch-local-stage`
 - `default_model` = `large-v3`
-- `cpu_threads`  = unset (CPU transcription sizes itself to the machine;
-  pin an int to cap it, `-UnsetCpuThreads` to go back to auto)
+- `cpu_threads`  = unset (faster-whisper's own default, 4; pin an int
+  only if you measure a gain -- see docs/benchmarks.md)
 - `gpu`          = detection result (`setup.ps1 -DetectGpu` re-probes)
 
 ## Safety

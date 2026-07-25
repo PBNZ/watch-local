@@ -71,21 +71,16 @@ Describe 'Whisper worker env selection' {
         (Get-WLWhisperWorkerEnv -Gpu $gpu -ModelsRoot $modelsRoot).W_DEVICE | Should -Be 'cpu'
     }
 
-    # cpu_threads (#34). Unpinned CPU runs auto-size to physical cores;
-    # a platform that will not report them leaves the var unset so the
-    # worker's own fallback decides -- either way, never a flat 4.
-    It 'auto-sizes W_CPU_THREADS on CPU when no pin is configured' {
+    # cpu_threads (#34). Auto-sizing to the core count was withdrawn:
+    # unpinned means the var is absent and faster-whisper's own default
+    # stands. Measurement drove this -- see docs/benchmarks.md.
+    It 'leaves W_CPU_THREADS unset on CPU when no pin is configured' {
         $gpu = [pscustomobject]@{ present = $false; cuda_whisper = $false }
-        $cores = Get-WLPhysicalCoreCount
         foreach ($v in @(
             (Get-WLWhisperWorkerEnv -Gpu $gpu -ModelsRoot $modelsRoot),
             (Get-WLWhisperWorkerEnv -Gpu $gpu -ModelsRoot $modelsRoot -CpuThreads $null)
         )) {
-            if ($null -eq $cores) {
-                $v.Keys | Should -Not -Contain 'W_CPU_THREADS'
-            } else {
-                $v.W_CPU_THREADS | Should -Be ([string]$cores)
-            }
+            $v.Keys | Should -Not -Contain 'W_CPU_THREADS'
         }
     }
 
@@ -99,15 +94,10 @@ Describe 'Whisper worker env selection' {
         (Get-WLWhisperWorkerEnv -Gpu $gpu -ModelsRoot $modelsRoot -CpuThreads 0).W_CPU_THREADS | Should -Be '0'
     }
 
-    It 'treats a negative pin as no pin (auto-sizes instead of passing garbage)' {
+    It 'treats a negative pin as no pin rather than passing garbage' {
         $gpu = [pscustomobject]@{ present = $false; cuda_whisper = $false }
         $v = Get-WLWhisperWorkerEnv -Gpu $gpu -ModelsRoot $modelsRoot -CpuThreads -3
-        $cores = Get-WLPhysicalCoreCount
-        if ($null -eq $cores) {
-            $v.Keys | Should -Not -Contain 'W_CPU_THREADS'
-        } else {
-            $v.W_CPU_THREADS | Should -Be ([string]$cores)
-        }
+        $v.Keys | Should -Not -Contain 'W_CPU_THREADS'
     }
 
     It 'never pins threads on a GPU run' {
@@ -158,22 +148,6 @@ Describe 'Process tree discovery' {
                 try { $child.StartTime | Should -BeGreaterOrEqual (Get-Process -Id $PID).StartTime } catch { }
             }
         }
-    }
-}
-
-Describe 'Physical core detection' {
-    It 'returns a positive count or null, never zero or negative' {
-        $cores = Get-WLPhysicalCoreCount
-        if ($null -ne $cores) { $cores | Should -BeGreaterThan 0 }
-    }
-
-    It 'never exceeds the CPUs this process may use' {
-        $cores = Get-WLPhysicalCoreCount
-        if ($null -ne $cores) { $cores | Should -BeLessOrEqual ([Environment]::ProcessorCount) }
-    }
-
-    It 'is stable across calls (cached)' {
-        Get-WLPhysicalCoreCount | Should -Be (Get-WLPhysicalCoreCount)
     }
 }
 

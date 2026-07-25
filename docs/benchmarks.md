@@ -1,207 +1,210 @@
 # Benchmarks and per-model guidance
 
-Which Whisper model should you run? On a GPU the answer is usually
-"whichever you like" -- on CPU it is the single biggest decision you
-make, worth a 44x swing in run time.
+Which Whisper model should you run, and what will it cost you? Every
+table below is measured on **the same video** so the rows can be
+compared at all -- see [the reference video](benchmarking.md#the-reference-video).
+Reproduce any of it with [benchmarking.md](benchmarking.md).
 
-Reproduce or extend any of this with
-[benchmarking.md](benchmarking.md); the harness is
-`plugins/watch-local/scripts/benchmark.ps1`.
+**The fixture:** `https://www.youtube.com/watch?v=AfOZ-MXe4uQ` -- The
+Infographics Show, 32 min 53 s (1973 s), clean single-narrator English
+with **human-written creator captions** (5,778 normalised reference
+words). `benchmark.ps1` uses it by default; run it with no arguments and
+you are running exactly what produced these numbers.
 
-> Every number here comes from **one clip on one machine**. They are
-> directional, not authoritative. Speech is the workload, so a different
-> video changes absolute times even on identical hardware -- the same
-> `small` model measured 5.6x real-time on the contributed laptop run
-> and 4.2x on a much faster workstation with a different clip. Compare
-> models *within* a table; never lift a multiplier as a spec.
+> **Read within a table, not across one.** Absolute speed depends on the
+> machine and the audio, and not in the way you would guess: the two CPU
+> tables below disagree by ~1.5x on identical audio, with the machine
+> that has *more* cores coming last. That is worth understanding rather
+> than averaging away.
 
 ## Pick a model
 
 | You are on | Use | Why |
 |---|---|---|
-| **NVIDIA GPU** | `large-v3` (the default) | CUDA/float16 makes the big model cheap. Nothing smaller is worth the accuracy trade. |
-| **CPU, everyday use** | `small` (the CPU default) | ~6x real-time, ~1 GB RAM, and within a point of `medium` on clean English. |
-| **CPU, accuracy matters** | `medium` | Best caption agreement measured, but ~3x slower than `small` and 2.7 GB RAM. |
-| **CPU, long video or a draft** | `base` | 15x real-time, under 1 GB. `tiny` is faster still but starts dropping proper nouns. |
-| **CPU + `large-v3`** | avoid | Slower than real-time, 6.5 GB RAM, and **no accuracy gain** over `medium` on clean English. It is a GPU-class model. |
+| **NVIDIA GPU** | `large-v3` (the shipped default) | Still 4.8x real-time here, and the model choice barely changes the wall clock. |
+| **CPU, everyday use** | `small` (what the wizard recommends) | The accuracy knee: `medium` buys 0.7 points of WER for ~2.8x the time. |
+| **CPU, accuracy matters** | `medium` | Best measured agreement with human captions, but ~26 min for a 33-min video. |
+| **CPU, long video or a draft** | `base` | ~2.7x faster than `small` for ~1.4 points of WER. |
+| **CPU + `large-v3`** | avoid | Slower than real-time on every machine measured, 5-6.5 GB RAM, and it scores *worse* against captions than `medium` (see below). |
 
 One-time model downloads: `tiny` ~75 MB, `base` ~150 MB, `small`
 ~500 MB, `medium` ~1.5 GB, `large-v3` ~3 GB.
 
-## CPU reference run
+## GPU -- RTX PRO 5000 Blackwell
 
-Contributed by an agent session benchmarking watch-local **0.6.1** and
-filed as [#36](https://github.com/PBNZ/watch-local/issues/36). All five
-models, same 32 min 53 s audio (clean single-narrator studio English
-with human captions), measured in isolation.
+Intel Core i9-12900K, Windows 11, `cuda`/`float16`, `benchmark.ps1` with
+no arguments.
 
-**Hardware:** Intel Core i7-10810U (6 cores / 12 threads), 16 GB RAM, no
-NVIDIA GPU, Fedora Linux 43. CPU-only, Whisper `int8`, VAD on, language
-auto-detected.
-
-| Model | Time | Speed vs real-time | Segments | Mean cores (of 12) | Peak process RSS |
+| Model | Time | Speed vs real-time | Mean cores | Peak RSS | WER vs captions |
 |---|---:|---:|---:|---:|---:|
-| `tiny` | 1m18 | **25.3x** | 237 | 3.2 | 0.75 GB |
-| `base` | 2m10 | **15.1x** | 355 | 3.5 | 0.80 GB |
-| `small` | 5m54 | **5.6x** | 539 | 3.7 | 1.04 GB |
-| `medium` | 16m48 | **2.0x** | 845 | 3.9 | 2.68 GB |
-| `large-v3` | **57m29** | **0.57x** (slower than the video) | 392 | 3.9 | 6.48 GB |
+| `tiny` | 55.3 s | 35.7x | 1.4 | 1,757 MB | 8.3% |
+| `base` | 55.7 s | 35.4x | 1.5 | 2,101 MB | 7.1% |
+| `small` | 89.5 s | 22.1x | 1.3 | 1,548 MB | 6.1% |
+| `medium` | 147.0 s | 13.4x | 1.2 | 1,685 MB | **5.5%** |
+| `large-v3` | 413.6 s | 4.8x | 1.4 | 2,998 MB | 16.0% |
 
-Each step up costs 1.7-3.4x more time; `large-v3` is ~44x slower than
-`tiny`. Memory only becomes a consideration at `large-v3` (peak system
-usage 9.6 GB of 16 GB).
+- **`tiny` and `base` are indistinguishable** (55.3 vs 55.7 s). At this
+  speed the fixed costs -- model load, audio decode, VAD -- dominate, so
+  there is no reason to run `tiny` on a GPU.
+- **`large-v3` is affordable**: 7.5x `tiny`'s time, still 4.8x
+  real-time, and it leaves the CPU almost free (~1.4 cores).
+- **Run-to-run spread is real.** A second identical run of `large-v3`
+  took 349 s rather than 414 s (-16%) and emitted a different segment
+  count, so treat single-digit-percent gaps here as noise.
 
-### Quality on the same run
+## CPU -- same machine, forced to CPU
 
-Scored against the creator captions (5,845 normalised words). **Lower
-WER = closer to the captions.**
+Same i9-12900K with `-Device cpu` (`int8`), same audio and same creator
+captions as the GPU run above, at the shipped default thread count.
+Warm pass skipped; models were already cached.
 
-| Model | Words | WER vs captions | Word Jaccard | WER vs `large-v3` |
-|---|---:|---:|---:|---:|
-| `tiny` | 5,840 | 6.3% | 0.865 | 10.4% |
-| `base` | 5,823 | 4.9% | 0.897 | 9.1% |
-| `small` | 5,822 | 4.4% | 0.913 | 8.6% |
-| `medium` | 5,818 | **3.5%** | 0.915 | 8.0% |
-| `large-v3` | 6,035 | 10.1% | 0.895 | -- |
+| Model | Time | Speed vs real-time | Mean cores | Peak RSS | WER vs captions |
+|---|---:|---:|---:|---:|---:|
+| `tiny` | 121.2 s | 16.3x | 3.0 | 1,487 MB | 8.6% |
+| `base` | 203.8 s | 9.7x | 3.3 | 1,695 MB | 7.4% |
+| `small` | 558.7 s | 3.5x | 3.3 | 1,348 MB | 6.0% |
+| `medium` | 1,544.2 s | 1.3x | 3.4 | 1,959 MB | **5.3%** |
+| `large-v3` | 4,479.5 s | **0.44x** | 3.4 | 4,909 MB | 13.3% |
 
-Reading these honestly:
+`large-v3` took **1 h 15 m** to transcribe a 33-minute video, and scored
+worse against the captions than `medium` did in a third of the time.
+Note the mean-cores column: ~3.0-3.4 on a 16-core machine, at every
+model size. That is not a configuration mistake -- see below.
 
-- **Accuracy climbs to `small`, then flattens.** `tiny` mangles or drops
-  proper nouns (Goldeneye, Faraday, Wormwood Scrubs, Roald Dahl);
-  `small` and `medium` land most of them.
-- **`large-v3`'s worst-looking score is not a quality failure.** It
-  transcribes more literally (+3% words) and hit one repetition loop, so
-  it agrees *least* with lightly-edited human captions while tying
-  `medium` for best on proper nouns. Captions reward editing, not
-  fidelity. (That loop is what [#35](https://github.com/PBNZ/watch-local/issues/35)
-  fixed -- 2x loops are now caught and flagged.)
-- **Rare names defeat everyone, humans included.** No source spelled
-  *Sidney Reilly*, *Gordievsky*, or *Fort Monckton* correctly -- the
-  captions themselves wrote "Riley", "Goryevski", "Monkton".
+## CPU -- contributed, 6-core laptop
 
-### Full pipeline, same machine
+Contributed with [#36](https://github.com/PBNZ/watch-local/issues/36)
+from watch-local 0.6.1: Intel Core i7-10810U (6 cores / 12 threads),
+16 GB RAM, Fedora Linux 43, CPU-only install, `int8`, 4 threads (the
+pre-0.7.0 default).
 
-One end-to-end `/watch` with `small`, 100 frames at 768 px:
+| Model | Time | Speed vs real-time | Mean cores (of 12) | Peak RSS | WER vs captions |
+|---|---:|---:|---:|---:|---:|
+| `tiny` | 78 s | 25.3x | 3.2 | 0.75 GB | 6.3% |
+| `base` | 130 s | 15.1x | 3.5 | 0.80 GB | 4.9% |
+| `small` | 354 s | 5.6x | 3.7 | 1.04 GB | 4.4% |
+| `medium` | 1,008 s | 2.0x | 3.9 | 2.68 GB | **3.5%** |
+| `large-v3` | 3,449 s | 0.57x | 3.9 | 6.48 GB | 10.1% |
 
-| Phase | Wall time | Notes |
-|---|---:|---|
-| Download (video + audio + captions) | ~15 s | network-bound |
-| Frame + audio extraction (ffmpeg) | ~100 s | ~980% CPU -- CPU decode, no NVDEC |
-| Transcription (`small`) | ~362 s | ~73% of total run time |
-| Compare | ~2 s | |
-| **Total** | **~8.3 min** | peak system memory ~5.1 GB |
+### Why the 6-core laptop beats the 16-core workstation
 
-Without an NVIDIA GPU, frame extraction is the CPU-heaviest phase but
-transcription is the *longest* one -- which is why model choice, not
-frame count, decides how long `/watch` takes.
+On identical audio the laptop is roughly **2x faster** than the i9 at
+every model size. That is not a typo, and it is the most useful thing in
+this document.
 
-## CPU thread scaling
+The one thing measurement establishes firmly:
 
-The "mean cores" column above is the bug
-[#34](https://github.com/PBNZ/watch-local/issues/34) reported: ~3-4
-threads busy on a 12-thread machine, whatever the model. The cause is
-faster-whisper's default `cpu_threads=0`, which ctranslate2 resolves to
-`OMP_NUM_THREADS` or **4** -- a constant, not a function of the machine.
+- **Whisper on CPU barely parallelises.** Mean core usage sat at
+  **2.4-3.9 on both machines regardless of the thread setting** --
+  4, 8, 12 or 16 requested made almost no difference to cores actually
+  used -- with brief peaks to 11 during encoder passes. The
+  autoregressive decoder dominates and runs essentially single-threaded.
+  Cores you add mostly idle.
 
-Since 0.7.0, unpinned CPU runs size themselves to the machine's
-**physical core count**. That number is not arbitrary -- it is where
-scaling stops paying.
+Candidate explanations for the rest of the gap, none of them confirmed:
 
-**Measured:** Intel Core i9-12900K (16 physical cores / 24 threads,
-8 P-cores + 8 E-cores), Windows 11, `small` on `cpu`/`int8`, the same
-8m36 English talk each time.
+- **The install differs.** The laptop ran a CPU-only stack; the
+  workstation runs the CUDA build forced onto CPU with `-Device cpu`.
+- **Background load.** The workstation carried ~3 of 24 cores of
+  unrelated work; the laptop was idle.
+- **Sustained-load behaviour.** The workstation's numbers drifted over a
+  long session in a way a 15-minute idle period did not undo, and the
+  cause was not identified.
+
+Practical reading: **do not size a CPU transcription box by core
+count**, and do not expect `-Device cpu` on a GPU machine to predict a
+CPU-only machine's numbers.
+
+## CPU thread count: why watch-local no longer touches it
+
+[#34](https://github.com/PBNZ/watch-local/issues/34) reported ~3-4
+threads busy on a 12-thread machine whatever the model, and read the
+idle cores as recoverable headroom. faster-whisper's `cpu_threads=0`
+does resolve inside ctranslate2 to `OMP_NUM_THREADS` or **4**, a
+constant rather than a function of the host -- so the diagnosis was
+right.
+
+The inference was not. **Those cores are idle because Whisper cannot use
+them**, and demanding more threads makes things worse. Full sweep on the
+reference video, same machine and audio, only the thread count changed:
+
+| Model | 4 threads (default) | 16 threads (physical cores) | Cost of more threads |
+|---|---:|---:|---:|
+| `tiny` | **121.2 s** | 178.5 s | +47% |
+| `base` | **203.8 s** | 280.5 s | +38% |
+| `small` | **558.7 s** | 719.1 s | +29% |
+| `medium` | **1,544.2 s** | 1,781.7 s | +15% |
+| `large-v3` | **4,479.5 s** | 5,739.1 s | +28% |
+
+Every model, slower. Mean cores actually used was ~3.0-3.4 in **both**
+columns -- asking for 16 did not deliver 16, it delivered the same ~3
+plus the overhead of coordinating threads that had nothing to do. `tiny`
+degrades monotonically (117 s / 137 s / 171 s at 4 / 8 / 16 threads),
+its matrices being far too small to pay for the threads.
+
+0.7.0 briefly shipped a default that sized CPU threads to the physical
+core count, published as "~24% faster" from a single sweep on a
+different clip. **That result has never reproduced** -- not on the
+reference video, not on the original clip, not after a 15-minute idle
+period -- and the sweep above is what repeated measurement shows. The
+default is withdrawn: an unpinned CPU run again uses faster-whisper's
+own setting.
+
+The knob remains, because hardware varies and yours may genuinely
+differ:
 
 ```powershell
-pwsh -File plugins/watch-local/scripts/benchmark.ps1 `
-     -Slug last -Device cpu -Models small -CpuThreads 0,4,8,12,16,24
+benchmark.ps1 -Slug last -Device cpu -Models small -CpuThreads 4,8,16
 ```
 
-| `cpu_threads` | Time | Speed vs real-time | vs the old default |
-|---|---:|---:|---:|
-| 0 (= faster-whisper's default, 4) | 169.2 s | 3.05x | -- |
-| 4 | 159.7 s | 3.23x | +6% |
-| 8 | 127.0 s | 4.06x | **+25%** |
-| 12 | **122.7 s** | **4.20x** | **+27%** |
-| 16 (physical cores -- the new default) | 128.8 s | 4.01x | **+24%** |
-| 24 (every logical CPU) | 151.7 s | 3.40x | +10% |
+Pin a winner with `setup.ps1 -SetCpuThreads N` (`0` = the library
+default), or `-UnsetCpuThreads` to go back. Measure in the state you
+actually transcribe in, and treat differences under ~10% as noise --
+`large-v3` on GPU varied 16% between two identical runs here.
 
-Three things this shows:
+**If you want CPU transcription to finish sooner, pick a smaller
+model.** That lever is worth 44x; the thread count is worth nothing
+reliable.
 
-1. **The old default left ~25% on the table** on a machine this size,
-   and the gap widens with core count.
-2. **Scaling saturates well before the thread count.** 8, 12, and 16 are
-   within 5% of each other -- a plateau, not a peak.
-3. **Using every logical CPU is nearly as bad as using four.** Piling
-   onto SMT siblings (and, here, E-cores) gives most of the win back,
-   which is why the default is physical cores rather than
-   `ProcessorCount`. Physical cores also lands correctly on non-SMT
-   machines like Apple Silicon, where the two counts are equal.
+## Quality: what the WER column does and does not mean
 
-Rows 0 and 4 request the same four threads and still differ by 6%, so
-treat differences under ~10% as noise; the 4-vs-12 gap is far outside
-it. Measured on an otherwise-idle workstation with light background
-load.
+Lower WER = closer to the creator captions. Across all three tables the
+shape is identical and worth trusting: **accuracy improves to `medium`,
+and `large-v3` scores worst.**
 
-Pin a different value with `setup.ps1 -SetCpuThreads N` (0 restores
-faster-whisper's own default), or `-UnsetCpuThreads` to go back to auto.
-Useful on a shared box, or when transcription competing for every core
-makes the rest of the machine unusable.
+That is not a `large-v3` failure. It transcribes more literally -- ~5%
+more words than the captions contain -- so it agrees least with
+human-*edited* text while being no less correct. The captions are an
+editor's rendering, not ground truth, which is exactly why the column is
+labelled "vs captions" and not "accuracy".
 
-## GPU reference run
+Two comparability warnings:
 
-Why `large-v3` is the default when CUDA works, and why the CPU table
-above should not be read as "big models are bad".
-
-**Hardware:** NVIDIA RTX PRO 5000 Blackwell (48 GB VRAM) on an Intel
-Core i9-12900K, Windows 11. `cuda`/`float16`, 8m36 English talk.
-Produced by `benchmark.ps1 -Slug last`.
-
-| Model | Time | Speed vs real-time | Mean cores | Peak RSS | Drift vs auto-captions |
-|---|---:|---:|---:|---:|---:|
-| `tiny` | 17.0 s | 30.3x | 2.3 | 761 MB | 5.7% |
-| `base` | 20.0 s | 25.9x | 2.2 | 761 MB | 3.1% |
-| `small` | 29.3 s | 17.6x | 2.1 | 762 MB | 3.1% |
-| `medium` | 43.5 s | 11.9x | 1.9 | 1,119 MB | 2.4% |
-| `large-v3` | 62.4 s | **8.3x** | 2.0 | 2,690 MB | 2.7% |
-
-> **The last column is not accuracy.** This clip carries only YouTube
-> **auto-generated** captions, so that WER measures how far each model
-> drifts from *another speech recogniser* -- both sides can be wrong,
-> and a better model can score worse. Read the timing columns here and
-> take quality signal from the CPU table above, whose reference is
-> human-edited. (`benchmark.ps1` now labels caption provenance in every
-> report so this distinction cannot be lost again.)
-
-**On a GPU the model-size decision nearly disappears.** `large-v3` costs
-3.7x `tiny`'s time and still transcribes at 8x real-time -- where on CPU
-the same step-up is a ~44x penalty that pushes past real-time. It also
-barely touches the CPU (about 2 cores, mostly audio decode and feature
-extraction), so the machine stays usable.
-
-The same clip on the same machine forced to CPU (`benchmark.ps1 -Slug
-last -Device cpu -Models tiny,base`, 16 threads): `tiny` 30.3 s and
-`base` 48.5 s, versus 17.0 s and 20.0 s on the GPU -- and the gap widens
-sharply with model size.
-
-One caveat to carry over: this is a **different, shorter clip** than the
-CPU reference run above, so do not compare the two tables directly. Only
-the timing column is comparable within this table.
+- **Across tables the quality numbers are only roughly comparable.** The
+  contributed run scored with the reporter's own script (which splits
+  `don't` into two tokens); `quality.py` keeps contractions intact. Its
+  reference came to 5,845 words against our 5,778.
+- **Caption provenance matters more than either.** WER against a
+  platform's *auto* captions measures drift between two speech
+  recognisers, not accuracy. `benchmark.ps1` states which kind it used
+  in every report; only `creator` captions support the readings above.
 
 ## Contributing numbers
 
 More hardware makes these tables worth trusting -- especially CPU-only
-machines and non-Windows hosts. See
-[benchmarking.md](benchmarking.md#contributing-numbers); results are
-published with attribution and the hardware behind them.
+machines and non-Windows hosts, and any machine that can say whether the
+CUDA-build-on-CPU theory above holds. See
+[benchmarking.md](benchmarking.md#contributing-numbers).
 
 ## Caveats
 
-- **Captions are not ground truth.** They are human-*edited*, so WER
-  measures agreement with an editor, not correctness.
 - **One clip, easy audio.** Clean studio narration. On noisy audio,
   accents, overlapping speakers, or non-English, larger models pull
   ahead in ways this fixture cannot show.
-- **Timings exclude one-time model downloads** but include
-  load-from-disk.
-- **Laptops throttle.** Sustained `large-v3` runs on thin hardware vary
-  run to run.
+- **Captions are human-edited, not ground truth.**
+- **The workstation figures carry background load.** Its measurements
+  ran with ~2-4 of 24 cores busy (MCP servers, file sync). The laptop
+  figures were taken on an otherwise-idle machine.
+- **Timings include model load-from-disk, exclude the download.**
+- **Thermal state is part of the measurement**, as the table above
+  shows. Numbers from a cold machine flatter it.

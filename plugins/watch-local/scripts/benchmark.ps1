@@ -10,6 +10,9 @@
     (docs/benchmarks.md) reproducible on any supported platform.
 
     Method -- see docs/benchmarking.md for the rationale:
+      0. Every published number uses ONE fixed video (see -Source), so
+         results from different machines can be compared at all. Run it
+         with no arguments to reproduce them.
       1. Acquire audio once (download + extract, or reuse a job / file),
          so every model transcribes byte-identical input.
       2. Per model: an untimed warm run, then a timed run. The warm pass
@@ -32,8 +35,21 @@
 
 .PARAMETER Source
     URL or local/UNC path to benchmark. Ignored when -Slug or -AudioPath
-    is given. Defaults to the clip the published reference numbers use,
-    so a new run is directly comparable.
+    is given.
+
+    Defaults to THE reference fixture every published table uses:
+
+        https://www.youtube.com/watch?v=AfOZ-MXe4uQ
+        "50 Insane Declassified MI6 Secrets You Didn't Know"
+        The Infographics Show -- 32 min 53 s (1973 s)
+
+    Chosen because it is public, long enough for the differences between
+    models to be unmistakable, clean single-narrator English, and carries
+    human-written creator captions -- which is what makes the WER column
+    a quality signal rather than a comparison against another machine's
+    guess. Run without -Source (or pass that URL) whenever you intend to
+    compare your numbers with the published ones; anything else measures
+    a different workload.
 
 .PARAMETER Slug
     Reuse an already-watched job's audio.mp3 and creator captions. The
@@ -72,6 +88,13 @@
 .PARAMETER SkipQuality
     Skip WER scoring (timing only).
 
+.PARAMETER SkipWarm
+    Skip the untimed warm pass, halving the run. Only valid when every
+    model is ALREADY downloaded and has been loaded at least once
+    recently -- otherwise the first model's timing absorbs its download
+    and is meaningless. Worth it for CPU sweeps, where the warm pass on
+    large-v3 alone can cost an hour.
+
 .EXAMPLE
     benchmark.ps1 -Slug last -Models small,medium
     Benchmark two models against the last video you watched.
@@ -99,6 +122,7 @@ param(
     [string]$OutDir = '',
     [int]$SampleMs = 500,
     [switch]$SkipQuality,
+    [switch]$SkipWarm,
     [switch]$VerboseLog
 )
 #endregion
@@ -172,12 +196,9 @@ if ($Device -eq 'cpu') {
     $whisperEnv.W_COMPUTE = 'int8'
     # Forcing CPU on a GPU box skips the CPU branch entirely, so repeat
     # its thread choice here -- a benchmark should measure what /watch
-    # would actually run on a CPU-only machine, not the bare fallback.
+    # would actually run on a CPU-only machine.
     if ($null -ne $configThreads -and [int]$configThreads -ge 0) {
         $whisperEnv.W_CPU_THREADS = [string][int]$configThreads
-    } else {
-        $cores = Get-WLPhysicalCoreCount
-        if ($null -ne $cores -and $cores -gt 0) { $whisperEnv.W_CPU_THREADS = [string]$cores }
     }
 } elseif ($Device -eq 'gpu') {
     if (-not (Get-WLObjectProp $gpuInfo 'cuda_whisper')) {
@@ -449,12 +470,16 @@ foreach ($run in $runs) {
     # Warm first: a full untimed pass that absorbs the one-time model
     # download and first load, so the timed run measures steady state.
     # It costs as much as the timed run -- the price of comparability.
-    Write-Stage "[$($run.Label)] warm-up (untimed full pass -- may download the model)"
-    $warm = Invoke-WLMeasuredWorker -Script 'whisper_run.py' -EnvVars $runEnv `
-                                    -LogPrefix (Join-Path $OutDir "warm-$($run.Label)") -IntervalMs 2000
-    if ($warm.ExitCode -ne 0) {
-        Write-Warn "[$($run.Label)] warm-up failed (exit $($warm.ExitCode)); see $($warm.StderrLog). Skipping."
-        continue
+    if ($SkipWarm) {
+        Write-Detail "[$($run.Label)] warm-up skipped (-SkipWarm)"
+    } else {
+        Write-Stage "[$($run.Label)] warm-up (untimed full pass -- may download the model)"
+        $warm = Invoke-WLMeasuredWorker -Script 'whisper_run.py' -EnvVars $runEnv `
+                                        -LogPrefix (Join-Path $OutDir "warm-$($run.Label)") -IntervalMs 2000
+        if ($warm.ExitCode -ne 0) {
+            Write-Warn "[$($run.Label)] warm-up failed (exit $($warm.ExitCode)); see $($warm.StderrLog). Skipping."
+            continue
+        }
     }
 
     Write-Stage "[$($run.Label)] timed run"
@@ -541,6 +566,7 @@ $payload = [ordered]@{
     compute        = $computeName
     reference_vtt  = [bool]$refVtt
     reference_kind = $refKind
+    warmed         = (-not $SkipWarm)
     machine        = $machine
     runs           = $results
     quality        = $quality
@@ -590,9 +616,15 @@ foreach ($r in $results) {
         $r.label, $r.cpu_threads, $r.seconds, $r.speed_vs_realtime, $r.mean_cores, $r.peak_rss_mb, $r.segments, (_Wer $r.label))
 }
 $lines += ""
-$lines += "Times cover model load-from-disk plus transcription; the one-time model"
-$lines += "download happens in an untimed warm-up run. Mean cores = processor-seconds"
-$lines += "consumed / wall seconds, sampled every ${SampleMs} ms."
+if ($SkipWarm) {
+    $lines += "Times cover model load-from-disk plus transcription. The untimed warm pass"
+    $lines += "was SKIPPED (-SkipWarm), so these numbers assume every model was already"
+    $lines += "downloaded and recently loaded."
+} else {
+    $lines += "Times cover model load-from-disk plus transcription; the one-time model"
+    $lines += "download happens in an untimed warm-up run."
+}
+$lines += "Mean cores = processor-seconds consumed / wall seconds, sampled every ${SampleMs} ms."
 if ($refVtt) {
     $lines += ""
     if ($refKind -eq 'auto') {

@@ -385,15 +385,7 @@ function _UnsetCpuThreadsCmd {
     $cfg = _EnsureConfig
     $cfg.cpu_threads = $null
     Save-WLConfig $cfg
-    # Name the number auto-sizing will actually use -- physical cores,
-    # not the logical count, which on an SMT machine is nearly double.
-    $cores = Get-WLPhysicalCoreCount
-    $detail = if ($null -ne $cores) {
-        "$cores physical core(s) here"
-    } else {
-        "this platform does not report physical cores, so the worker falls back to all $([Environment]::ProcessorCount) available CPUs"
-    }
-    Write-Stage "cpu_threads cleared -- CPU transcription sizes itself to the machine ($detail)"
+    Write-Stage 'cpu_threads cleared -- CPU transcription uses faster-whisper''s own default (4 threads). Measure before pinning: docs/benchmarks.md.'
     exit 0
 }
 #endregion

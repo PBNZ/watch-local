@@ -8,6 +8,28 @@ against creator captions.
 Published results live in [benchmarks.md](benchmarks.md). This page is
 how to reproduce or extend them.
 
+## The reference video
+
+**Every published number is measured on one video, and yours should be
+too** -- otherwise the tables describe different workloads and cannot be
+compared:
+
+| | |
+|---|---|
+| **URL** | `https://www.youtube.com/watch?v=AfOZ-MXe4uQ` |
+| **Title** | "50 Insane Declassified MI6 Secrets You Didn't Know" (The Infographics Show) |
+| **Length** | 32 min 53 s (1973 s) |
+| **Why this one** | public; long enough that the gap between models is unmistakable; clean single-narrator English; and it carries **human-written creator captions**, which is what makes the WER column a quality measure instead of a comparison against another machine's guess |
+
+`benchmark.ps1` uses it automatically -- `-Source` defaults to that URL,
+so running the script with no arguments is the reproducible case. You
+never need to type it, but if you drive the worker yourself, that is the
+video to use.
+
+Benchmark a *different* video whenever you like (`-Source`, `-Slug`,
+`-AudioPath`) -- just do not compare those numbers to the published
+tables, and say which clip you used if you publish them.
+
 ## Quick start
 
 The examples below use `pwsh -File <script>`; `powershell -File` works
@@ -27,17 +49,18 @@ downloaded and every model transcribes byte-identical audio:
 pwsh -File plugins/watch-local/scripts/benchmark.ps1 -Slug last -Models small,medium
 ```
 
-Full sweep against the default fixture:
+Full sweep against the reference video -- this is the command that
+produces the published tables, and it needs no arguments because
+`-Source` already defaults to the fixture:
 
 ```powershell
-pwsh -File plugins/watch-local/scripts/benchmark.ps1
+pwsh -File plugins/watch-local/scripts/benchmark.ps1              # GPU when available
+pwsh -File plugins/watch-local/scripts/benchmark.ps1 -Device cpu  # CPU numbers
 ```
 
-The published tables in [benchmarks.md](benchmarks.md) were **not** all
-measured on that fixture -- the CPU reference table used it, the
-maintainer-measured tables used a shorter clip via `-Slug`. Comparing
-your run to a published table is only meaningful when the clip matches,
-which is why the default `-Source` exists at all.
+Run those two **separately, never at the same time**, and leave the
+machine otherwise idle: a sweep sharing the CPU with a build or a test
+run measures the contention, not the model.
 
 CPU numbers on a GPU machine -- the comparison most users need, because
 `large-v3` behaves completely differently without CUDA:
@@ -46,25 +69,30 @@ CPU numbers on a GPU machine -- the comparison most users need, because
 pwsh -File plugins/watch-local/scripts/benchmark.ps1 -Slug last -Device cpu -Models small
 ```
 
-CPU thread scaling (how `W_CPU_THREADS` pays off on your core count):
+CPU thread scaling, if you want to check whether your machine behaves
+differently from the ones in [benchmarks.md](benchmarks.md) (on those,
+raising the count did not help and often hurt):
 
 ```powershell
 pwsh -File plugins/watch-local/scripts/benchmark.ps1 -Slug last -Device cpu -Models small -CpuThreads 0,4,8,16
 ```
 
-`-CpuThreads 0` hands the choice back to faster-whisper, which uses
-`OMP_NUM_THREADS` if that is set in your environment and otherwise 4
-threads regardless of machine size -- the behaviour issue #34 changed.
-watch-local never sets `OMP_NUM_THREADS` itself, so on a normal shell
-`0` means 4.
+`-CpuThreads 0` is what watch-local uses by default: faster-whisper's
+own setting, which is `OMP_NUM_THREADS` if you export it and otherwise
+4 threads regardless of machine size. watch-local never sets
+`OMP_NUM_THREADS` itself, so on a normal shell `0` means 4.
 
 > **Time budget: roughly double what the tables say.** Every model is
 > transcribed **twice** -- an untimed warm run, then the timed one -- so
 > a model listed at 5 minutes costs about 10 minutes of wall clock. On
-> CPU, `large-v3` can run slower than real-time (a 30-minute clip took
-> ~57 minutes *per pass* on a 6-core laptop). Start with `-Models
+> CPU, `large-v3` can run slower than real-time (the reference video
+> took ~57 minutes *per pass* on a 6-core laptop). Start with `-Models
 > tiny,base,small`, and only add `medium`/`large-v3` when you can leave
 > the machine alone.
+>
+> Once every model is downloaded and has been run once, `-SkipWarm`
+> drops the warm pass and halves the wall clock. Do not use it on a
+> first run: the first model's timing would swallow its own download.
 
 ## Output
 

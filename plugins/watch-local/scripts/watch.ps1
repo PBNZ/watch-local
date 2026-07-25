@@ -334,7 +334,7 @@ if ($DryRun) {
     $deviceLabel = if ($whisperOnGpu) { 'GPU' } else { 'CPU' }
     Write-Stage "running whisper on $deviceLabel (model: $Model)..."
     if (-not $whisperOnGpu -and $Model -eq 'large-v3') {
-        Write-Warn 'large-v3 on CPU runs SLOWER than real-time (57 min for a 33-min video in our reference run) and gains nothing over medium on clean English. Consider -Model small or medium -- see docs/benchmarks.md.'
+        Write-Warn 'large-v3 on CPU runs SLOWER than real-time (57-75 min for a 33-min video on the two machines measured) and scored WORSE against human captions than medium. Consider -Model small or medium -- see docs/benchmarks.md.'
     }
     $whisperEnv = (Get-WLWhisperWorkerEnv -Gpu $gpuInfo -ModelsRoot $modelsDir -CpuThreads (Get-WLObjectProp $config 'cpu_threads')) + @{
         W_WORK_DIR = $workDir

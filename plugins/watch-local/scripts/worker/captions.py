@@ -4,6 +4,9 @@ Handles:
 - UTF-8 with or without BOM (YouTube VTTs are sometimes BOM'd).
 - Trailing position/align attributes after the timestamp line.
 - Inline cue timing tags like <00:00:00.080><c> word</c>.
+- HTML entities (&nbsp;, &amp;, &#39;) -- creator captions pad line ends
+  with &nbsp;, and leaving them encoded turns "nbsp" into a WORD in every
+  downstream text comparison.
 - Rolling auto-caption duplicates that overlap by suffix, not just prefix.
 
 Provenance is read from yt-dlp's info.json: keys `subtitles` (creator-uploaded
@@ -13,6 +16,7 @@ automatic_captions has it, source = "auto". Anything else = None.
 """
 from __future__ import annotations
 
+import html
 import json
 import re
 from pathlib import Path
@@ -22,6 +26,25 @@ TS_RE = re.compile(
     r"(\d{2}):(\d{2}):(\d{2})[.,](\d{3})\s+-->\s+(\d{2}):(\d{2}):(\d{2})[.,](\d{3})"
 )
 TAG_RE = re.compile(r"<[^>]+>")
+WS_RE = re.compile(r"\s+")
+
+
+def _clean_cue_text(line: str) -> str:
+    """Strip cue tags, decode entities, and normalize whitespace.
+
+    Order matters: unescape AFTER stripping tags, so an entity that
+    decodes into '<' can never be mistaken for markup. The unescape is
+    what keeps '&nbsp;' from reaching the word tokenizers as the literal
+    token 'nbsp' -- on a typical creator-captioned video that token was
+    the single most frequent "word" in the reference text, wrecking WER
+    and the /watch similarity metrics alike.
+    """
+    text = TAG_RE.sub("", line)
+    text = html.unescape(text)
+    # Escaped on purpose: a literal U+00A0 in source is invisible, and
+    # an editor or a copy-paste can silently turn it back into a space.
+    text = text.replace("\u00a0", " ")
+    return WS_RE.sub(" ", text).strip()
 
 
 def _to_seconds(h: str, m: str, s: str, ms: str) -> float:
@@ -53,7 +76,7 @@ def parse_vtt(path: str) -> list[dict]:
 
         cue_lines: list[str] = []
         while i < len(lines) and lines[i].strip():
-            cleaned = TAG_RE.sub("", lines[i]).strip()
+            cleaned = _clean_cue_text(lines[i])
             if cleaned:
                 cue_lines.append(cleaned)
             i += 1

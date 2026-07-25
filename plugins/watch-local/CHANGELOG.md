@@ -2,12 +2,71 @@
 
 ## [Unreleased]
 
+## 0.7.1 -- 2026-07-26
+
+Correction release. Re-running the benchmarks properly -- all five
+models, CPU and GPU, on the one reference video every published table is
+supposed to use -- overturned a performance claim from 0.7.0 and
+uncovered a caption-parsing bug that had been quietly skewing `/watch`'s
+own transcript comparison.
+
+### Added
+- **`benchmark.ps1 -SkipWarm`** -- skip the untimed warm pass, halving a
+  run, for when every model is already downloaded and recently loaded. A
+  CPU sweep including `large-v3` otherwise spends an hour warming.
+
+### Changed
+- **Withdrew 0.7.0's CPU thread auto-sizing (#34) -- it made CPU
+  transcription 15-47% SLOWER.** That release sized unpinned CPU runs to
+  the physical core count and published it as "~24% faster". A full
+  five-model sweep on the reference video, same machine and audio with
+  only the thread count changed, says the opposite:
+
+  | Model | 4 threads | 16 threads | Cost |
+  |---|---:|---:|---:|
+  | `tiny` | 121.2 s | 178.5 s | +47% |
+  | `base` | 203.8 s | 280.5 s | +38% |
+  | `small` | 558.7 s | 719.1 s | +29% |
+  | `medium` | 1,544.2 s | 1,781.7 s | +15% |
+  | `large-v3` | 4,479.5 s | 5,739.1 s | +28% |
+
+  Mean cores actually used was ~3 in **both** columns: asking for 16 did
+  not deliver 16, it delivered the same ~3 plus coordination overhead.
+  Whisper's autoregressive decoder does not parallelise, so the idle
+  cores #34 spotted are idle because they cannot be used, not because of
+  a bad setting. The original "+24%" sweep has never reproduced --
+  including after a 15-minute idle period -- and its companion
+  core-count figures came from the process-tree walk before it gained
+  the recycled-PID guard. An unpinned CPU run therefore uses
+  faster-whisper's own setting again. `W_CPU_THREADS`, `-SetCpuThreads`,
+  and `benchmark.ps1 -CpuThreads` all remain, for anyone whose own
+  measurements disagree.
+
+### Fixed
+- **Caption HTML entities are decoded before any text comparison.**
+  `parse_vtt` stripped cue tags but left entities encoded, so creator
+  captions that pad line ends with `&nbsp;` fed the literal token
+  `nbsp` into every downstream word comparison. On the 33-minute
+  reference video that was **992 of 6,770 reference words -- the single
+  most frequent "word" in the transcript**, ahead of "the" (342). It
+  inflated benchmark WER (`small` scored 19.7% instead of 6.1%) and,
+  more importantly, depressed `/watch`'s own creator-vs-Whisper
+  `length_ratio` / `word_jaccard` / `trigram_jaccard`, which can push a
+  perfectly good transcript pair into the report's "major divergence"
+  callout. Entities are now unescaped after tag-stripping (so a decoded
+  `&lt;` can never be re-read as markup), U+00A0 is folded to a space,
+  and whitespace is collapsed.
+
 ## 0.7.0 -- 2026-07-25
 
 Performance and measurement release: CPU transcription now uses the
 whole machine, 2x hallucination loops no longer slip through unflagged,
 and there is a benchmark harness so any of this can be checked on your
 own hardware instead of taken on faith.
+
+> **Superseded in part by 0.7.1.** The CPU-threading change below, and
+> the "~24% faster" figure that justified it, did not reproduce and was
+> withdrawn. Everything else in this release stands.
 
 ### Added
 - **`benchmark.ps1` -- a repeatable cross-platform benchmark harness**

@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from whisper_run import available_cpus, collapse_repetitions, resolve_cpu_threads
+from whisper_run import collapse_repetitions, resolve_cpu_threads
 
 
 def _seg(start: float, end: float, text: str) -> dict:
@@ -148,37 +148,29 @@ def test_min_run_three_still_governs_plausible_runs():
 # --- cpu_threads policy (#34) ----------------------------------------------
 
 
-def test_available_cpus_is_positive():
-    assert available_cpus() >= 1
+def test_unset_keeps_library_default():
+    # Auto-sizing was withdrawn: unset means faster-whisper decides.
+    assert resolve_cpu_threads("") == 0
 
 
-def test_cpu_auto_uses_available_cpus():
-    assert resolve_cpu_threads("", "cpu") == available_cpus()
+def test_explicit_override_is_honoured():
+    assert resolve_cpu_threads("6") == 6
 
 
-def test_gpu_auto_keeps_library_default():
-    assert resolve_cpu_threads("", "cuda") == 0
-
-
-def test_explicit_override_wins_on_both_devices():
-    assert resolve_cpu_threads("6", "cpu") == 6
-    assert resolve_cpu_threads("6", "cuda") == 6
-
-
-def test_explicit_zero_restores_library_default():
-    assert resolve_cpu_threads("0", "cpu") == 0
+def test_explicit_zero_is_the_library_default():
+    assert resolve_cpu_threads("0") == 0
 
 
 def test_whitespace_is_trimmed():
-    assert resolve_cpu_threads("  8  ", "cpu") == 8
+    assert resolve_cpu_threads("  8  ") == 8
 
 
 @pytest.mark.parametrize("bad", ["-1", "many", "3.5", "8x"])
-def test_invalid_values_fall_back_to_auto(bad, capsys):
-    assert resolve_cpu_threads(bad, "cpu") == available_cpus()
+def test_invalid_values_fall_back_to_default(bad, capsys):
+    assert resolve_cpu_threads(bad) == 0
     assert "W_CPU_THREADS" in capsys.readouterr().err
 
 
-def test_unset_env_var_reads_as_auto():
+def test_unset_env_var_reads_as_default():
     # main() passes os.environ.get(...) through _env, i.e. "" when unset.
-    assert resolve_cpu_threads(os.environ.get("W_CPU_THREADS_ABSENT", ""), "cpu") == available_cpus()
+    assert resolve_cpu_threads(os.environ.get("W_CPU_THREADS_ABSENT", "")) == 0

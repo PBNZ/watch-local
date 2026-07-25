@@ -10,7 +10,7 @@ Inputs (env):
     W_LANGUAGE     language code or "" for auto-detect
     W_DEVICE       device (default: cuda)
     W_COMPUTE      compute type (default: float16)
-    W_CPU_THREADS  CPU worker threads; "" = auto, "0" = library default
+    W_CPU_THREADS  CPU worker threads; "" or "0" = faster-whisper default
 
 Outputs:
     /work/transcript_whisper.json
@@ -48,52 +48,37 @@ def _env(name: str, default: str = "") -> str:
     return v if v != "" else default
 
 
-def available_cpus() -> int:
-    """CPUs this process may actually use (affinity / cgroup aware)."""
-    get_affinity = getattr(os, "sched_getaffinity", None)
-    if get_affinity is not None:
-        try:
-            return len(get_affinity(0))
-        except OSError:
-            pass
-    return os.cpu_count() or 0
-
-
-def resolve_cpu_threads(raw: str, device: str) -> int:
+def resolve_cpu_threads(raw: str) -> int:
     """Pick ctranslate2's intra_threads count for this run.
 
-    faster-whisper's cpu_threads=0 default becomes "OMP_NUM_THREADS if
-    set, else 4" inside ctranslate2, so CPU transcription ran on ~4
-    threads no matter how many cores the machine had (#34).
+    Unset means "let faster-whisper decide", which is 4 threads
+    (OMP_NUM_THREADS if that is exported). #34 read the resulting idle
+    cores as wasted headroom, but measurement says otherwise: CPU
+    transcription is dominated by the autoregressive decoder, which does
+    not parallelise, so a run uses ~3 cores on average whatever it is
+    told. Handing it more threads was neutral at best and 18-45% SLOWER
+    at worst on the machines measured -- see docs/benchmarks.md.
 
-    W_CPU_THREADS decides: a positive int pins the count, 0 restores the
-    library default. The launcher normally sets it to the physical core
-    count, which is where CPU scaling plateaus -- see
-    Get-WLPhysicalCoreCount. The auto path below is the fallback for a
-    direct worker run (tests, benchmarks, a platform that would not
-    report its core layout): every CPU this process may use, which beats
-    a flat 4 without needing to know the machine's SMT topology. On GPU
-    the value only affects feature extraction, so keep the library
-    default rather than pinning host threads a CUDA run does not need.
-
-    Garbage falls back to auto with a warning -- a transcription is too
-    expensive to abort over a tuning knob.
+    So there is no auto-sizing here: W_CPU_THREADS (or config
+    cpu_threads) pins the count for anyone whose own measurements
+    disagree, and 0 restores the library default. Garbage falls back to
+    the default with a warning -- a transcription is far too expensive
+    to abort over a tuning knob.
     """
     text = (raw or "").strip()
-    if text:
-        try:
-            n = int(text)
-        except ValueError:
-            n = -1
-        if n >= 0:
-            return n
-        print(
-            f"[whisper] WARNING: ignoring W_CPU_THREADS={text!r} (want a non-negative integer)",
-            file=sys.stderr, flush=True,
-        )
-    if device.startswith("cuda"):
+    if not text:
         return 0
-    return available_cpus()
+    try:
+        n = int(text)
+    except ValueError:
+        n = -1
+    if n >= 0:
+        return n
+    print(
+        f"[whisper] WARNING: ignoring W_CPU_THREADS={text!r} (want a non-negative integer)",
+        file=sys.stderr, flush=True,
+    )
+    return 0
 
 
 def is_degenerate_repeat(segments: list[dict], i: int, j: int) -> bool:
@@ -170,7 +155,7 @@ def main() -> int:
     language = _env("W_LANGUAGE", "") or None
     device = _env("W_DEVICE", "cuda")
     compute_type = _env("W_COMPUTE", "float16")
-    cpu_threads = resolve_cpu_threads(_env("W_CPU_THREADS"), device)
+    cpu_threads = resolve_cpu_threads(_env("W_CPU_THREADS"))
 
     import cuda_paths
     cuda_paths.add_cuda_dll_dirs()

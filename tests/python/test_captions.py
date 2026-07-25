@@ -74,6 +74,42 @@ class TestParseVTT:
         # BOM must not leak into the first cue's text.
         assert segs[0]["text"] == "Hello world"
 
+    def test_html_entities_are_decoded(self):
+        # Creator captions pad line ends with &nbsp;. Left encoded, the
+        # word tokenizers downstream read "nbsp" as a real word -- on a
+        # real 33-minute video that was 992 of 6,770 reference words, the
+        # most frequent "word" in the transcript.
+        vtt = (
+            "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\n"
+            "the secret&nbsp; intelligence service&nbsp;&nbsp;\n\n"
+            "00:00:02.000 --> 00:00:04.000\n"
+            "Bond &amp; Q said &quot;hello&quot; &#39;today&#39;\n"
+        )
+        segs = parse_vtt(str(_write_tmp_vtt(vtt)))
+        assert segs[0]["text"] == "the secret intelligence service"
+        assert segs[1]["text"] == "Bond & Q said \"hello\" 'today'"
+        joined = " ".join(s["text"] for s in segs)
+        assert "nbsp" not in joined
+        assert "&" not in joined.replace("Bond & Q", "")
+        assert " " not in joined
+
+    def test_entities_decoded_after_tag_strip(self):
+        # &lt;c&gt; must survive as visible text, not be re-eaten as a tag.
+        vtt = (
+            "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\n"
+            "<c>use &lt;div&gt; here</c>\n"
+        )
+        segs = parse_vtt(str(_write_tmp_vtt(vtt)))
+        assert segs[0]["text"] == "use <div> here"
+
+    def test_whitespace_is_collapsed(self):
+        vtt = (
+            "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\n"
+            "spaced\t\tout    words\n"
+        )
+        segs = parse_vtt(str(_write_tmp_vtt(vtt)))
+        assert segs[0]["text"] == "spaced out words"
+
     def test_rolling_dedupe_collapses(self):
         p = _write_tmp_vtt(VTT_YOUTUBE_ROLLING)
         segs = parse_vtt(str(p))
