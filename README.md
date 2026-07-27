@@ -32,7 +32,7 @@ mode. No cloud API keys, no admin rights, nothing installed on the system
 <!-- state:begin keys=overall_status,gpu_support,platform_support -->
 | Fact | Value | As of |
 |---|---|---|
-| Release status | 0.7.1 (stable release) | 2026-07-25 |
+| Release status | 0.7.2 (stable release) | 2026-07-27 |
 | GPU / compute support | auto-detected -- NVDEC decode + CUDA whisper on NVIDIA GPUs, CPU-only fallback (int8) otherwise | 2026-07-14 |
 | Host platform support | Windows 11 (primary, best-tested); Linux x64 / macOS arm64 via PowerShell 7, CPU mode (newer, less tested) | 2026-07-14 |
 <!-- state:end -->
@@ -93,17 +93,22 @@ All measured on the same 33-minute video (see
 | `base` | 10-15x | 35.4x | long content on CPU |
 | `small` | 3.5-5.6x | 22.1x | **what the wizard recommends on CPU** -- the accuracy knee |
 | `medium` | 1.3-2.0x | 13.4x | accuracy-first on CPU, if you can wait |
-| `large-v3` | **0.44-0.57x** | 4.8x | the shipped default; impractical on CPU |
+| `large-v3` | **0.44-0.67x** | 4.8x | the shipped default; impractical on CPU |
 
 The CPU range spans the two machines measured -- a 6-core laptop
 (contributed, issue #36) and a 16-core workstation, which is the *slower*
-of the two. CPU transcription barely parallelises (it uses ~3 cores
-whatever you give it), so core count predicts very little; the GPU column
-is one RTX PRO 5000.
+of the two. The exception is `large-v3`, where both ends come from the
+workstation alone: that model varies more between its own runs than the
+two machines differ, and the laptop's 0.57x sits inside the range. CPU
+transcription barely parallelises (it uses ~3 cores whatever you give
+it), so core count predicts very little; the GPU column is one RTX PRO
+5000.
 
-On CPU, `large-v3` took **57 to 75 minutes for a 33-minute video** and
+On CPU, `large-v3` took **49 to 75 minutes for a 33-minute video** and
 scored *worse* against human captions than `medium` did in a third of the
-time; on a GPU it is ~5x real-time and the model choice barely matters.
+time -- because on this clip it got stuck in repetition loops in 10 of 11
+runs, which is also why its numbers are a range rather than a figure. On
+a GPU it is ~5x real-time and the model choice barely matters.
 Full numbers, hardware, and caveats:
 [`docs/benchmarks.md`](./docs/benchmarks.md) -- reproduce them on your
 own machine with [`docs/benchmarking.md`](./docs/benchmarking.md).

@@ -2,6 +2,84 @@
 
 ## [Unreleased]
 
+## 0.7.2 -- 2026-07-27
+
+Documentation-correction release; no behaviour changes. Two explanations
+published in 0.7.1 turned out to be wrong, both in the direction of
+sounding more certain than the evidence supported.
+
+### Fixed
+- **"The workstation runs the CUDA build forced onto CPU" -- refuted.**
+  0.7.1 offered this as the leading explanation for a 16-core
+  workstation trailing a 6-core laptop, and told readers not to treat
+  `-Device cpu` on a GPU box as representative of a CPU-only install.
+  Provisioning a second, genuinely CPU-only runtime next to the GPU one
+  shows there is no such thing as a separate CPU build: PyPI ships one
+  `ctranslate2` wheel with CUDA compiled in, and all four of its native
+  binaries are **byte-identical** across the two installs (sha256). A
+  CPU run never loads the NVIDIA libraries either -- after a real int8
+  decode, `cublas64_12`, `cublasLt64_12`, `cudnn_ops64_9`,
+  `cudnn_graph64_9` and `nvrtc64_120_0` are all unloaded. With both
+  runtimes pinned to identical package versions so they differed by
+  exactly the three `nvidia-*` wheels, four of five models produced
+  identical segment counts and identical WER to the decimal. An initial
+  2-7% timing gap was confounded with run order -- whichever stack runs
+  second reads the weights from a warm page cache. Reversing the order
+  flipped `base` to -3.6% and collapsed `tiny` to +0.9%; `small` kept
+  its sign and grew to +27.8%, on a run that sampled 2.16 mean cores
+  against 3.0-3.3 elsewhere. Timing on this box is too noisy to settle a
+  few percent either way, so the identical transcripts are what settle
+  it. **`-Device cpu` on a GPU machine is a faithful CPU-only
+  measurement**, so contributors do not need GPU-free hardware.
+- **`large-v3`'s poor WER had the wrong cause.** 0.7.1 explained it as
+  the model "transcribing more literally -- ~5% more words than the
+  captions contain". The surplus words are repeated text from decodes
+  that got stuck: those runs tripped watch-local's own repetition
+  detector 1-5 times each. On the reference fixture `large-v3`
+  degenerated in **8 of 8 GPU runs and 2 of 3 CPU runs**; no other model
+  has tripped it once. The single clean run emitted 5,713 words against
+  a 5,778-word reference -- *fewer* than the captions -- and scored
+  **5.9%** rather than 13-17%. Root cause is upstream and verified in
+  `faster_whisper/transcribe.py`: the default temperature ladder retries
+  a segment judged "too repetitive" (`compression_ratio_threshold=2.4`),
+  and above temperature 0 decoding switches from beam search to
+  stochastic sampling -- so identical audio legitimately yields
+  different transcripts, segment counts and runtimes.
+
+### Changed
+- **`large-v3` figures are now published as ranges**, with the number of
+  runs behind them. Six back-to-back GPU runs spanned 255-342 s and
+  11.6-17.7% WER (255-414 s across all eight GPU runs on record); two
+  CPU runs at the shipped default thread count spanned 2,964-4,479 s,
+  and a third at the withdrawn 16-thread setting took 5,739 s. `tiny`
+  through `medium` reproduce to within contention noise and are
+  unchanged.
+- **README**: CPU `large-v3` is now 0.44-0.67x real-time / 49-75 minutes
+  (was 0.44-0.57x / 57-75), and says why the figure is a range.
+- **`/watch-setup`** names repetition loops as the reason `large-v3`
+  scores worse than `medium` on CPU, instead of implying it is a
+  harmless stylistic difference.
+- **`benchmarking.md`** adds `mean_cores` as a contamination check for
+  contributed runs, and tells contributors to report `large-v3` as a
+  range or not at all.
+- **`/watch`'s runtime warning** for CPU + `large-v3` now says 49-75 min
+  and attributes the spread to run-to-run decode instability rather than
+  to the two machines measured.
+
+### Fixed (documentation errors found while re-checking)
+- **"the laptop is roughly 2x faster than the i9" was stale.** That
+  ratio came from the 16-thread sweep 0.7.1 withdrew; against the
+  default-thread table it is 1.30-1.58x, and the page contradicted
+  itself twice (its own lead-in and `/watch-setup` both said ~1.5x).
+- **"`large-v3` on GPU varied 16% between two identical runs"** predated
+  the six-run repeat table added in this release. Eight GPU runs are now
+  on record spanning 255-414 s -- the slowest 62% slower than the
+  fastest, not 16%.
+- **The `large-v3` row of the thread-count table now carries a warning.**
+  Its +28% is two single degenerate draws, and two runs at a fixed
+  thread count already span 51%, so the thread delta is not separable
+  from the model's own noise. The other four rows are unaffected.
+
 ## 0.7.1 -- 2026-07-25
 
 Correction release. Re-running the benchmarks properly -- all five

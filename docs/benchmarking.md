@@ -153,7 +153,17 @@ Four decisions matter for numbers that mean anything:
   this fixture cannot show.
 - **Thermals and background load.** Laptops throttle on sustained runs;
   `large-v3` is where that shows up first. Re-run if the machine was
-  busy.
+  busy. `mean_cores` is a decent contamination check: if a run reports
+  noticeably fewer cores than its neighbours, something else had the
+  CPU and the timing is not comparable.
+- **`large-v3` is not deterministic.** faster-whisper retries a segment
+  at a higher temperature when it looks too repetitive, and above
+  temperature 0 decoding switches from beam search to stochastic
+  sampling -- so the same audio can give a different transcript, a
+  different segment count and a different runtime every time. On the
+  reference fixture it degenerated in 10 of 11 runs. Report `large-v3`
+  as a range from several runs, or not at all; the `repetition_runs`
+  column in `results.json` tells you whether a run got stuck.
 - **The fixture is a third-party video.** It can be taken down or break
   with a yt-dlp change. `-Slug` / `-AudioPath` exist so a benchmark is
   never blocked on that.
@@ -166,6 +176,11 @@ To contribute:
 1. Run the full sweep, ideally against the default `-Source` so the clip
    matches. `-Device cpu` results are especially valuable -- most
    published data is GPU-shaped, and CPU is where model choice hurts.
+   **A GPU machine is fine for this:** `-Device cpu` on a box with an
+   NVIDIA GPU was measured against a separately provisioned CPU-only
+   install and produced identical transcripts, so you do not need
+   GPU-free hardware to contribute CPU numbers
+   ([details](benchmarks.md#the-cuda-build-theory-tested-and-wrong)).
 2. Open an issue with `report.md` pasted in, plus your CPU model, RAM,
    OS, and GPU (if any). `results.json` already carries the machine
    block; attach it if you can.

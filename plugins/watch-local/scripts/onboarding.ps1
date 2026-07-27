@@ -144,14 +144,18 @@ if (-not $gpuPresent) {
     # Measured, not folklore: a 6-core laptop took 57 min to transcribe a
     # 33-min video with large-v3, and small/medium matched it on clean
     # English. Set expectations before the user picks the biggest name.
+    # large-v3 loses on quality here because it degenerates into
+    # repetition loops on that clip (10 of 11 runs), not because it
+    # transcribes too literally -- see docs/benchmarks.md.
     Write-Output ''
     Write-Output 'On CPU, model choice dominates run time. Transcribing the same'
     Write-Output '33-minute reference video on a 6-core laptop took: tiny 1m18,'
     Write-Output 'small 5m54, medium 16m48, large-v3 57m29 -- slower than the video'
     Write-Output 'itself, and large-v3 scored WORSE against human captions than'
-    Write-Output 'medium did. A 16-core workstation was ~1.5x SLOWER still:'
-    Write-Output 'CPU whisper uses only ~3 cores whatever the machine, so core'
-    Write-Output 'count buys little. Numbers and caveats: docs/benchmarks.md.'
+    Write-Output 'medium did: on that clip it got stuck repeating itself in 10 of'
+    Write-Output '11 runs. A 16-core workstation was ~1.5x SLOWER still: CPU'
+    Write-Output 'whisper uses only ~3 cores whatever the machine, so core count'
+    Write-Output 'buys little. Numbers and caveats: docs/benchmarks.md.'
 }
 $recommended = if ($gpuPresent) { 'large-v3' } else { 'small' }
 $pickedModel = if ($Model) { $Model } else { _Prompt 'Which model?' $recommended }
