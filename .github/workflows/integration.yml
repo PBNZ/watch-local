@@ -16,8 +16,22 @@ jobs:
     name: native workers (ubuntu / pwsh, CPU runtime)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # Anonymous huggingface.co downloads from shared runner IPs get
+      # 429-rate-limited (2026-07-27 run). Optional secret; empty means
+      # anonymous, which the model cache below makes survivable.
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      # Cache ONLY the whisper model (rate-limit-flaky download). The
+      # binary downloads stay uncached on purpose: catching a rotted
+      # pin is this job's reason to exist.
+      - name: Cache whisper model
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.local/share/watch-local/models
+          key: whisper-model-tiny-v1
 
       - name: Provision portable runtime (CPU, tiny model)
         shell: pwsh
