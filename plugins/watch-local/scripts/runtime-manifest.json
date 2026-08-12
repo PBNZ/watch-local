@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "comment": "Pinned portable-runtime versions. All URLs are immutable versioned release assets; sha256 verified on 2026-07-14 (Phase 0 spike box). Update pins + hashes together, then setup.ps1 -UpdateRuntime.",
+  "comment": "Pinned portable-runtime versions. Update pins + hashes together, then setup.ps1 -UpdateRuntime. Most URLs are immutable versioned release assets, but BtbN/FFmpeg-Builds PRUNES daily autobuild releases after ~2 weeks and retains only month-end tags long-term -- pin linux ffmpeg to month-end tags only (a daily pin 404'd from 2026-08-03 and broke Integration CI).",
   "python": "3.12",
   "pip": {
     "common": [
@@ -60,7 +60,7 @@
         "files": [{ "url": "https://github.com/GyanD/codexffmpeg/releases/download/8.1.2/ffmpeg-8.1.2-essentials_build.zip", "sha256": "db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec" }]
       },
       "linux_x64": {
-        "files": [{ "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-13-14-11/ffmpeg-n8.1.2-22-g94138f6973-linux64-gpl-8.1.tar.xz", "sha256": "08cf3fb886e077ce05494d5bba6ca060336b1477ec8496ca4637e87c441cc95a" }]
+        "files": [{ "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-31-14-10/ffmpeg-n8.1.2-34-g9b6c8969e0-linux64-gpl-8.1.tar.xz", "sha256": "09fc77be269c7053e438b7e96548e4af97604faf96a42c4a3c56a1ad74c22c0a" }]
       },
       "macos_arm64": {
         "comment": "evermeet builds are x86_64; run under Rosetta 2 on Apple Silicon",

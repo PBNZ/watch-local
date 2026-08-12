@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Linux ffmpeg re-pinned to a BtbN month-end build.** The previous pin
+  pointed at a daily autobuild that BtbN prunes after ~2 weeks, so fresh
+  Linux provisioning has been failing with a 404 since 2026-08-03. BtbN
+  retains month-end tags long-term; the manifest now pins the 2026-07-31
+  build (same 8.1.2 release branch) and documents the month-end-only rule.
+
 ## 0.7.2 -- 2026-07-27
 
 Documentation-correction release; no behaviour changes. Two explanations
