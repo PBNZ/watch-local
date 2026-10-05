@@ -85,6 +85,21 @@ Describe 'runtime-manifest.json integrity' {
             $p | Should -Match '=='
         }
     }
+
+    It 'holds av below 19 while faster-whisper is 1.2.x' {
+        # PyAV 19 removed av.open(metadata_errors=...), which faster-whisper
+        # 1.2.x's decode_audio passes on every call; faster-whisper itself
+        # only asks for av>=11. Left unpinned, a fresh provision broke every
+        # transcription. Bump av together with a faster-whisper release that
+        # carries the upstream fix (SYSTRAN/faster-whisper#1495), never alone.
+        $common = @($m.pip.common)
+        $fw = [string]($common | Where-Object { $_ -like 'faster-whisper==*' })
+        if ($fw -match '^faster-whisper==1\.2\.') {
+            $av = [string]($common | Where-Object { $_ -like 'av==*' })
+            $av | Should -Not -BeNullOrEmpty -Because 'unpinned av resolves to 19+, which faster-whisper 1.2.x cannot call'
+            [version]($av -replace '^av==', '') | Should -BeLessThan ([version]'19.0')
+        }
+    }
 }
 
 Describe 'Test-WLRuntime against a fabricated tree' {

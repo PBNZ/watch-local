@@ -2,7 +2,26 @@
 
 ## [Unreleased]
 
+## 0.7.3 -- 2026-10-05
+
+Provisioning-fix release. Two upstream changes had broken fresh installs:
+one made every transcription fail, the other blocked Linux setup outright.
+
 ### Fixed
+- **Transcription broke on any runtime provisioned since 2026-09-29 --
+  `av` is now pinned to 18.1.0.** PyAV 19.0.0 (released 2026-09-29)
+  removed the `metadata_errors` argument to `av.open()`, and
+  faster-whisper 1.2.1's `decode_audio` passes it on every call, so every
+  `/watch` failed with `TypeError: open() got an unexpected keyword
+  argument 'metadata_errors'`. faster-whisper only declares `av>=11`, and
+  `av` was not in the manifest, so a fresh `/watch-setup` or
+  `setup.ps1 -UpdateRuntime` resolved straight to 19. Upstream has fixed
+  it (SYSTRAN/faster-whisper#1495) but 1.2.1 is still the latest release.
+  Caught by the weekly integration run; reproduced on Windows too. A new
+  unit test fails if `av` is unpinned or reaches 19 while faster-whisper
+  is 1.2.x. **If `/watch` fails with that `TypeError`, run
+  `setup.ps1 -UpdateRuntime`** -- it rebuilds the venv with the pin.
+  Runtimes provisioned before 2026-09-29 are unaffected.
 - **Linux ffmpeg re-pinned to a BtbN month-end build.** The previous pin
   pointed at a daily autobuild that BtbN prunes after ~2 weeks, so fresh
   Linux provisioning has been failing with a 404 since 2026-08-03. BtbN

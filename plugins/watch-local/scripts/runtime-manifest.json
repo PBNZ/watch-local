@@ -3,9 +3,11 @@
   "comment": "Pinned portable-runtime versions. Update pins + hashes together, then setup.ps1 -UpdateRuntime. Most URLs are immutable versioned release assets, but BtbN/FFmpeg-Builds PRUNES daily autobuild releases after ~2 weeks and retains only month-end tags long-term -- pin linux ffmpeg to month-end tags only (a daily pin 404'd from 2026-08-03 and broke Integration CI).",
   "python": "3.12",
   "pip": {
+    "comment": "av is pinned because faster-whisper 1.2.1 declares av>=11 with no upper bound, and PyAV 19.0.0 removed the av.open(metadata_errors=) argument that faster-whisper's decode_audio passes on every call. Fixed upstream in SYSTRAN/faster-whisper#1495 but unreleased as of 1.2.1 -- bump av only together with a faster-whisper release that contains it.",
     "common": [
       "faster-whisper==1.2.1",
-      "ctranslate2==4.8.1"
+      "ctranslate2==4.8.1",
+      "av==18.1.0"
     ],
     "gpu": [
       "nvidia-cublas-cu12==12.9.2.10",
